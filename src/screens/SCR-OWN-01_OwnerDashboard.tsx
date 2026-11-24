@@ -25,6 +25,7 @@ import {
   Calendar,
   Wallet,
   FlaskConical,
+  Truck,
 } from "lucide-react";
 
 interface OwnerDashboardProps {
@@ -648,11 +649,11 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                 </div>
 
                 {/* Treasury Balance Sheet: Receivables, Operating Expenses & Salaries */}
-                <div className="pt-2 grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-3 gap-4">
+                <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* 1. Wholesale Receivables (Pending Credit) */}
               <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-amber-500/20 flex flex-col justify-between shadow-2xs">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Wholesale Receivables (Pending Credit)</span>
+                  <span className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Wholesale Receivables (Credit)</span>
                   <div className="p-1.5 bg-amber-500/10 rounded-lg text-amber-600 dark:text-amber-400">
                     <TrendingUp className="w-4 h-4" />
                   </div>
@@ -665,10 +666,28 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                 </div>
               </div>
 
-              {/* 2. Shop Overheads (Operating Expenses) */}
+              {/* 2. Online Receivables (Pending COD / Custodians) */}
+              <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-blue-500/20 flex flex-col justify-between shadow-2xs">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Online Receivables (Pending COD)</span>
+                  <div className="p-1.5 bg-blue-500/10 rounded-lg text-blue-600 dark:text-blue-400">
+                    <Truck className="w-4 h-4" />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-lg font-bold font-mono text-blue-600 dark:text-blue-400">
+                    Rs. {formatPaisa(dashboard.total_online_pending_paisa ?? 0)}
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono block mt-1">
+                    {dashboard.online_pending_orders_count ?? 0} orders pending with riders & staff
+                  </span>
+                </div>
+              </div>
+
+              {/* 3. Shop Overheads (Operating Expenses) */}
               <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-rose-500/20 flex flex-col justify-between shadow-2xs">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Operating Expenses (Shop Overheads)</span>
+                  <span className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Operating Expenses</span>
                   <div className="p-1.5 bg-rose-500/10 rounded-lg text-rose-600 dark:text-rose-400">
                     <Percent className="w-4 h-4" />
                   </div>
@@ -681,7 +700,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                 </div>
               </div>
 
-              {/* 3. Employee Salaries Paid */}
+              {/* 4. Employee Salaries Paid */}
               <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-indigo-500/20 flex flex-col justify-between shadow-2xs">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Employee Salaries Paid</span>

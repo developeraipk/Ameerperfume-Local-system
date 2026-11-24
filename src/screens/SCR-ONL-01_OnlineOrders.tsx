@@ -73,6 +73,19 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OnlineOrder | null>(null);
 
+  // Print Slip Modal State
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [printModalOrder, setPrintModalOrder] = useState<OnlineOrder | null>(null);
+  const [printSlipFormat, setPrintSlipFormat] = useState<"THERMAL_80MM" | "A4">("THERMAL_80MM");
+
+  // Attar Portion & Custom Rate Customizer State
+  const [selectedAttarForOnline, setSelectedAttarForOnline] = useState<AttarProduct | null>(null);
+  const [attarPortionUnit, setAttarPortionUnit] = useState<"TOLA" | "HALF_TOLA" | "QUARTER_TOLA" | "12ML" | "6ML" | "3ML" | "CUSTOM_TOLA" | "CUSTOM_ML">("TOLA");
+  const [attarPortionQty, setAttarPortionQty] = useState<number>(1);
+  const [attarCustomRateRupees, setAttarCustomRateRupees] = useState<string>("");
+  const [attarCustomTola, setAttarCustomTola] = useState<number>(1);
+  const [attarCustomMl, setAttarCustomMl] = useState<number>(10);
+
   // New Order Form State
   const [newChannel, setNewChannel] = useState<"WHATSAPP" | "WEBSITE">("WHATSAPP");
   const [custName, setCustName] = useState("");
@@ -80,7 +93,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const [custCity, setCustCity] = useState("");
   const [custAddress, setCustAddress] = useState("");
   const [orderItems, setOrderItems] = useState<OnlineOrderItem[]>([]);
-  const [deliveryCharges, setDeliveryCharges] = useState("200");
+  const [deliveryCharges, setDeliveryCharges] = useState("0");
   const [discountRupees, setDiscountRupees] = useState("0");
   const [advancePaidRupees, setAdvancePaidRupees] = useState("0");
   const [courierPartner, setCourierPartner] = useState(COURIER_PARTNERS[0]);
@@ -195,8 +208,17 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const handleAddItem = (prod: FinishedProduct | AttarProduct, type: "PERFUME" | "ATTAR") => {
     if (type === "PERFUME") {
       const p = prod as FinishedProduct;
+      const stock = p.current_stock_units ?? 0;
+      if (stock <= 0) {
+        alert(`"${p.name}" is currently Out of Stock (0 units remaining). Cannot be added to order!`);
+        return;
+      }
       const existing = orderItems.find((it) => it.product_id === p.product_id);
       if (existing) {
+        if (existing.quantity >= stock) {
+          alert(`Cannot add more than available stock (${stock} units) for "${p.name}".`);
+          return;
+        }
         setOrderItems(
           orderItems.map((it) =>
             it.product_id === p.product_id
@@ -224,34 +246,82 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       }
     } else {
       const a = prod as AttarProduct;
-      const existing = orderItems.find((it) => it.attar_id === a.attar_id);
-      if (existing) {
-        setOrderItems(
-          orderItems.map((it) =>
-            it.attar_id === a.attar_id
-              ? {
-                  ...it,
-                  quantity: it.quantity + 1,
-                  line_total_paisa: (it.quantity + 1) * it.unit_price_paisa,
-                }
-              : it
-          )
-        );
-      } else {
-        setOrderItems([
-          ...orderItems,
-          {
-            attar_id: a.attar_id,
-            name: `${a.name} (1 Tola / 12ml)`,
-            item_type: "ATTAR",
-            quantity: 1,
-            unit_price_paisa: a.selling_price_per_tola_paisa,
-            line_total_paisa: a.selling_price_per_tola_paisa,
-            grams: 12.0,
-          },
-        ]);
-      }
+      // Open Attar Portion & Custom Rate Dialog
+      setSelectedAttarForOnline(a);
+      setAttarPortionUnit("TOLA");
+      setAttarPortionQty(1);
+      setAttarCustomRateRupees(Math.round(a.selling_price_per_tola_paisa / 100).toString());
+      setAttarCustomTola(1);
+      setAttarCustomMl(10);
     }
+  };
+
+  const handleConfirmAddAttar = () => {
+    if (!selectedAttarForOnline) return;
+    const a = selectedAttarForOnline;
+
+    let unitPricePaisa = 0;
+    let unitLabel = "";
+    let grams = 12.0;
+
+    if (attarPortionUnit === "TOLA") {
+      unitPricePaisa = a.selling_price_per_tola_paisa;
+      unitLabel = "1 Tola (11.66g)";
+      grams = 11.66;
+    } else if (attarPortionUnit === "HALF_TOLA") {
+      unitPricePaisa = a.selling_price_half_tola_paisa;
+      unitLabel = "1/2 Tola (5.83g)";
+      grams = 5.83;
+    } else if (attarPortionUnit === "QUARTER_TOLA") {
+      unitPricePaisa = a.selling_price_quarter_tola_paisa;
+      unitLabel = "1/4 Tola (2.92g)";
+      grams = 2.92;
+    } else if (attarPortionUnit === "12ML") {
+      unitPricePaisa = Math.round(a.selling_price_per_ml_paisa * 12);
+      unitLabel = "12 ml";
+      grams = 12.0;
+    } else if (attarPortionUnit === "6ML") {
+      unitPricePaisa = Math.round(a.selling_price_per_ml_paisa * 6);
+      unitLabel = "6 ml";
+      grams = 6.0;
+    } else if (attarPortionUnit === "3ML") {
+      unitPricePaisa = Math.round(a.selling_price_per_ml_paisa * 3);
+      unitLabel = "3 ml";
+      grams = 3.0;
+    } else if (attarPortionUnit === "CUSTOM_TOLA") {
+      const tola = attarCustomTola || 1;
+      unitPricePaisa = Math.round(a.selling_price_per_tola_paisa * tola);
+      unitLabel = `${tola} Tola`;
+      grams = tola * 11.66;
+    } else if (attarPortionUnit === "CUSTOM_ML") {
+      const ml = attarCustomMl || 1;
+      unitPricePaisa = Math.round(a.selling_price_per_ml_paisa * ml);
+      unitLabel = `${ml} ml`;
+      grams = ml;
+    }
+
+    const effectiveUnitPricePaisa =
+      attarCustomRateRupees.trim() !== "" &&
+      !isNaN(Number(attarCustomRateRupees)) &&
+      Number(attarCustomRateRupees) > 0
+        ? Math.round(Number(attarCustomRateRupees) * 100)
+        : unitPricePaisa;
+
+    const qty = Math.max(1, attarPortionQty);
+    const lineTotalPaisa = effectiveUnitPricePaisa * qty;
+
+    const newItem: OnlineOrderItem = {
+      attar_id: a.attar_id,
+      name: `${a.name} (${unitLabel})`,
+      item_type: "ATTAR",
+      quantity: qty,
+      unit_price_paisa: effectiveUnitPricePaisa,
+      line_total_paisa: lineTotalPaisa,
+      grams: grams,
+    };
+
+    setOrderItems([...orderItems, newItem]);
+    setSelectedAttarForOnline(null);
   };
 
   const handleRemoveItem = (index: number) => {
@@ -263,15 +333,23 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       handleRemoveItem(index);
       return;
     }
+    const it = orderItems[index];
+    if (it.item_type === "PERFUME" && it.product_id) {
+      const prod = products.find((p) => p.product_id === it.product_id);
+      if (prod && newQty > (prod.current_stock_units ?? 0)) {
+        alert(`Cannot add more than available stock (${prod.current_stock_units} units) for "${prod.name}".`);
+        return;
+      }
+    }
     setOrderItems(
-      orderItems.map((it, idx) =>
+      orderItems.map((item, idx) =>
         idx === index
           ? {
-              ...it,
+              ...item,
               quantity: newQty,
-              line_total_paisa: newQty * it.unit_price_paisa,
+              line_total_paisa: newQty * item.unit_price_paisa,
             }
-          : it
+          : item
       )
     );
   };
@@ -343,7 +421,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     setCustCity("");
     setCustAddress("");
     setOrderItems([]);
-    setDeliveryCharges("200");
+    setDeliveryCharges("0");
     setDiscountRupees("0");
     setAdvancePaidRupees("0");
     setTrackingNumber("");
@@ -478,11 +556,8 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     }
   };
 
-  // PRINTING: Thermal 80mm & A4 Shipping Dispatch Slip
-  const handlePrintShippingSlip = (order: OnlineOrder, format: "THERMAL_80MM" | "A4") => {
-    const printArea = document.getElementById("print-area");
-    if (!printArea) return;
-
+  // Generate HTML for Thermal 80mm & A4 Consignment Dispatch Slip
+  const generateShippingSlipHtml = (order: OnlineOrder, format: "THERMAL_80MM" | "A4"): string => {
     let items: OnlineOrderItem[] = [];
     try {
       items = JSON.parse(order.items_json);
@@ -491,20 +566,20 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     }
 
     if (format === "THERMAL_80MM") {
-      printArea.innerHTML = `
+      return `
         <div style="width: 76mm; margin: 0 auto; padding: 4mm 2mm; font-family: monospace; font-size: 11px; color: #000; line-height: 1.35;">
           <div style="text-align: center; border-bottom: 2px dashed #000; padding-bottom: 6px; margin-bottom: 8px;">
             <div style="font-size: 16px; font-weight: 900; letter-spacing: 1px;">AMEER PERFUMES</div>
             <div style="font-size: 9px; text-transform: uppercase;">Haute Parfumerie & Luxury Attars</div>
             <div style="font-size: 9px;">Sports Complex, Bannu • Cell: 03100988522</div>
-            <div style="margin-top: 5px; font-weight: bold; font-size: 13px; background: #000; color: #fff; padding: 2px 4px; display: inline-block;">
+            <div style="margin-top: 5px; font-weight: bold; font-size: 12px; background: #000; color: #fff; padding: 2px 6px; display: inline-block; border-radius: 3px;">
               ${order.channel === "WHATSAPP" ? "💬 WHATSAPP ORDER" : "🌐 WEBSITE ORDER"}
             </div>
           </div>
 
           <div style="border-bottom: 1px solid #000; padding-bottom: 6px; margin-bottom: 6px;">
             <div><strong>ORDER NO:</strong> <span style="font-size: 13px; font-weight: 900;">${order.order_number}</span></div>
-            <div><strong>DATE:</strong> ${order.created_at}</div>
+            <div><strong>BOOKING DATE:</strong> ${order.created_at}</div>
             <div><strong>COURIER:</strong> ${order.courier_partner}</div>
             ${order.tracking_number ? `<div><strong>TRACKING #:</strong> ${order.tracking_number}</div>` : ""}
           </div>
@@ -516,8 +591,8 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
             <div style="font-size: 15px; font-weight: 900; letter-spacing: 0.5px; margin: 4px 0; color: #000;">
               📞 PHONE: ${order.customer_phone}
             </div>
-            <div style="font-size: 11px;"><strong>CITY:</strong> ${order.city}</div>
-            <div style="font-size: 11px; margin-top: 2px;"><strong>ADDRESS:</strong> ${order.shipping_address}</div>
+            <div style="font-size: 11px;"><strong>DESTINATION CITY:</strong> ${order.city}</div>
+            <div style="font-size: 11px; margin-top: 2px;"><strong>SHIPPING ADDRESS:</strong> ${order.shipping_address}</div>
           </div>
 
           <!-- ITEMS SUMMARY -->
@@ -581,7 +656,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       `;
     } else {
       // A4 Comprehensive Packing Invoice
-      printArea.innerHTML = `
+      return `
         <div style="width: 100%; max-width: 800px; margin: 0 auto; padding: 24px; font-family: sans-serif; color: #1e293b;">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #e2e8f0; padding-bottom: 16px; margin-bottom: 20px;">
             <div>
@@ -602,8 +677,8 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
               <h3 style="font-size: 12px; font-weight: 700; text-transform: uppercase; color: #64748b; margin: 0 0 8px 0;">Customer (Consignee) Details</h3>
               <div style="font-size: 16px; font-weight: 700; color: #0f172a;">${order.customer_name}</div>
               <div style="font-size: 15px; font-weight: 800; color: #b45309; margin: 4px 0;">📞 ${order.customer_phone}</div>
-              <div style="font-size: 12px; color: #334155;"><strong>City:</strong> ${order.city}</div>
-              <div style="font-size: 12px; color: #334155; margin-top: 2px;"><strong>Address:</strong> ${order.shipping_address}</div>
+              <div style="font-size: 12px; color: #334155;"><strong>Destination City:</strong> ${order.city}</div>
+              <div style="font-size: 12px; color: #334155; margin-top: 2px;"><strong>Shipping Address:</strong> ${order.shipping_address}</div>
             </div>
 
             <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; background: #f8fafc;">
@@ -683,17 +758,49 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
         </div>
       `;
     }
+  };
 
-    document.body.classList.add("printing-reports-a4");
-    setTimeout(() => {
-      window.print();
-      const cleanUp = () => {
-        document.body.classList.remove("printing-reports-a4");
-        if (printArea) printArea.innerHTML = "";
-        window.removeEventListener("afterprint", cleanUp);
-      };
-      window.addEventListener("afterprint", cleanUp);
-    }, 80);
+  // Open Print Slip Modal
+  const openPrintSlipModal = (order: OnlineOrder) => {
+    setPrintModalOrder(order);
+    setPrintSlipFormat("THERMAL_80MM");
+    setIsPrintModalOpen(true);
+  };
+
+  // Execute native print targeting correct container
+  const executePrintSlip = (order: OnlineOrder, format: "THERMAL_80MM" | "A4") => {
+    const html = generateShippingSlipHtml(order, format);
+
+    if (format === "THERMAL_80MM") {
+      const printArea = document.getElementById("thermal-print-area");
+      if (!printArea) return;
+      printArea.innerHTML = html;
+      document.body.classList.remove("printing-wholesale-a4");
+      document.body.classList.remove("printing-reports-a4");
+      setTimeout(() => {
+        window.print();
+        const cleanUp = () => {
+          if (printArea) printArea.innerHTML = "";
+          window.removeEventListener("afterprint", cleanUp);
+        };
+        window.addEventListener("afterprint", cleanUp);
+      }, 80);
+    } else {
+      const printArea = document.getElementById("wholesale-print-area");
+      if (!printArea) return;
+      printArea.innerHTML = html;
+      document.body.classList.add("printing-wholesale-a4");
+      document.body.classList.remove("printing-reports-a4");
+      setTimeout(() => {
+        window.print();
+        const cleanUp = () => {
+          document.body.classList.remove("printing-wholesale-a4");
+          if (printArea) printArea.innerHTML = "";
+          window.removeEventListener("afterprint", cleanUp);
+        };
+        window.addEventListener("afterprint", cleanUp);
+      }, 80);
+    }
   };
 
   // Export Orders to CSV
@@ -1061,26 +1168,16 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                       </Button>
                     )}
 
-                    {/* Print Slip (Thermal & A4) */}
+                    {/* Unified Professional Print Slip Button */}
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => handlePrintShippingSlip(o, "THERMAL_80MM")}
-                      className="h-7 px-2 text-[11px] font-semibold border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 cursor-pointer"
-                      title="Print 80mm Thermal Dispatch Slip with Customer Phone & COD"
+                      onClick={() => openPrintSlipModal(o)}
+                      className="h-7 px-2.5 text-[11px] font-bold border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10 flex items-center gap-1 cursor-pointer"
+                      title="Print Shipping Dispatch Slip (Choose 80mm Thermal or A4 Consignment Note)"
                     >
-                      <Printer className="w-3 h-3" />
-                      <span>Thermal</span>
-                    </Button>
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handlePrintShippingSlip(o, "A4")}
-                      className="h-7 px-2 text-[11px] font-semibold border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                      title="Print A4 Packing Slip"
-                    >
-                      <span>A4</span>
+                      <Printer className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                      <span>Print Slip</span>
                     </Button>
 
                     {/* Status Update Button */}
@@ -1274,45 +1371,73 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                 </div>
 
                 {/* Products Grid to click & add */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-36 overflow-y-auto p-1 border border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50 dark:bg-slate-950/40">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto p-1.5 border border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50 dark:bg-slate-950/40">
                   {selectedItemType === "PERFUME"
                     ? products
                         .filter((p) => !itemSearch.trim() || p.name.toLowerCase().includes(itemSearch.toLowerCase()))
-                        .slice(0, 12)
-                        .map((p) => (
-                          <button
-                            key={p.product_id}
-                            type="button"
-                            onClick={() => handleAddItem(p, "PERFUME")}
-                            className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-left hover:border-amber-500 transition-all cursor-pointer flex flex-col justify-between"
-                          >
-                            <div className="font-semibold text-slate-800 dark:text-slate-200 truncate">
-                              {p.name}
-                            </div>
-                            <div className="flex items-center justify-between text-[10px] font-mono mt-1 text-slate-500">
-                              <span>{p.size_ml}ml</span>
-                              <span className="font-bold text-amber-600 dark:text-amber-400">
-                                Rs. {formatRs(p.retail_price_paisa)}
-                              </span>
-                            </div>
-                          </button>
-                        ))
+                        .slice(0, 16)
+                        .map((p) => {
+                          const stock = p.current_stock_units ?? 0;
+                          const isOutOfStock = stock <= 0;
+                          return (
+                            <button
+                              key={p.product_id}
+                              type="button"
+                              onClick={() => {
+                                if (isOutOfStock) return;
+                                handleAddItem(p, "PERFUME");
+                              }}
+                              disabled={isOutOfStock}
+                              className={`p-2 rounded-lg border text-left transition-all flex flex-col justify-between ${
+                                isOutOfStock
+                                  ? "opacity-40 cursor-not-allowed bg-rose-500/5 border-rose-500/30"
+                                  : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-amber-500 cursor-pointer shadow-2xs"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-1">
+                                <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                  {p.name}
+                                </span>
+                                {isOutOfStock ? (
+                                  <span className="text-[9px] font-bold text-rose-600 bg-rose-100 dark:bg-rose-950/60 px-1 py-0.2 rounded shrink-0">
+                                    0 Stock
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-mono text-emerald-600 dark:text-emerald-400 shrink-0">
+                                    {stock} left
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center justify-between text-[10px] font-mono mt-1 text-slate-500">
+                                <span>{p.size_ml}ml</span>
+                                <span className={`font-bold ${isOutOfStock ? "text-slate-400 line-through" : "text-amber-600 dark:text-amber-400"}`}>
+                                  Rs. {formatRs(p.retail_price_paisa)}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })
                     : attars
                         .filter((a) => !itemSearch.trim() || a.name.toLowerCase().includes(itemSearch.toLowerCase()))
-                        .slice(0, 12)
+                        .slice(0, 16)
                         .map((a) => (
                           <button
                             key={a.attar_id}
                             type="button"
                             onClick={() => handleAddItem(a, "ATTAR")}
-                            className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-left hover:border-amber-500 transition-all cursor-pointer flex flex-col justify-between"
+                            className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-left hover:border-emerald-500 transition-all cursor-pointer flex flex-col justify-between shadow-2xs"
                           >
-                            <div className="font-semibold text-slate-800 dark:text-slate-200 truncate">
-                              {a.name}
+                            <div className="flex items-start justify-between gap-1">
+                              <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                {a.name}
+                              </span>
+                              <span className="text-[9px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-1 py-0.2 rounded shrink-0">
+                                Decant / Portion
+                              </span>
                             </div>
                             <div className="flex items-center justify-between text-[10px] font-mono mt-1 text-slate-500">
-                              <span>1 Tola</span>
-                              <span className="font-bold text-amber-600 dark:text-amber-400">
+                              <span>1 Tola / Custom Rate</span>
+                              <span className="font-bold text-emerald-600 dark:text-emerald-400">
                                 Rs. {formatRs(a.selling_price_per_tola_paisa)}
                               </span>
                             </div>
@@ -1785,6 +1910,381 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                 </Button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUB-MODAL: ATTAR PORTION & CUSTOM RATE FOR ONLINE ORDER */}
+      {/* ========================================================================= */}
+      {selectedAttarForOnline && (() => {
+        const a = selectedAttarForOnline;
+        let unitPricePaisa = 0;
+        let unitLabel = "";
+        let unitVol = "";
+
+        if (attarPortionUnit === "TOLA") {
+          unitPricePaisa = a.selling_price_per_tola_paisa;
+          unitLabel = "1 Tola";
+          unitVol = "11.66 grams (~11.1 ml)";
+        } else if (attarPortionUnit === "HALF_TOLA") {
+          unitPricePaisa = a.selling_price_half_tola_paisa;
+          unitLabel = "1/2 Tola";
+          unitVol = "5.83 grams (~5.5 ml)";
+        } else if (attarPortionUnit === "QUARTER_TOLA") {
+          unitPricePaisa = a.selling_price_quarter_tola_paisa;
+          unitLabel = "1/4 Tola";
+          unitVol = "2.92 grams (~2.8 ml)";
+        } else if (attarPortionUnit === "12ML") {
+          unitPricePaisa = Math.round(a.selling_price_per_ml_paisa * 12);
+          unitLabel = "12 ml";
+          unitVol = "12.0 ml";
+        } else if (attarPortionUnit === "6ML") {
+          unitPricePaisa = Math.round(a.selling_price_per_ml_paisa * 6);
+          unitLabel = "6 ml";
+          unitVol = "6.0 ml";
+        } else if (attarPortionUnit === "3ML") {
+          unitPricePaisa = Math.round(a.selling_price_per_ml_paisa * 3);
+          unitLabel = "3 ml";
+          unitVol = "3.0 ml";
+        } else if (attarPortionUnit === "CUSTOM_TOLA") {
+          const tola = attarCustomTola || 1;
+          unitPricePaisa = Math.round(a.selling_price_per_tola_paisa * tola);
+          unitLabel = `${tola} Tola`;
+          unitVol = `${(tola * 11.66).toFixed(2)} grams`;
+        } else if (attarPortionUnit === "CUSTOM_ML") {
+          const ml = attarCustomMl || 1;
+          unitPricePaisa = Math.round(a.selling_price_per_ml_paisa * ml);
+          unitLabel = `${ml} ml`;
+          unitVol = `${ml}.0 ml`;
+        }
+
+        const effectiveUnitPricePaisa =
+          attarCustomRateRupees.trim() !== "" &&
+          !isNaN(Number(attarCustomRateRupees)) &&
+          Number(attarCustomRateRupees) > 0
+            ? Math.round(Number(attarCustomRateRupees) * 100)
+            : unitPricePaisa;
+
+        return (
+          <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-lg p-5 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+              {/* Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-slate-100 text-sm">
+                    💧 Attar Portion & Custom Rate: {a.name}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-mono">
+                    SKU: {a.sku} • Select portion / bottle size & adjust custom price
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedAttarForOnline(null)}
+                  className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Portion Selector Grid */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                  Select Dispensing Portion / Size:
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { id: "TOLA" as const, label: "1 Tola (11.66g)", price: Math.round(a.selling_price_per_tola_paisa / 100) },
+                    { id: "HALF_TOLA" as const, label: "1/2 Tola (5.83g)", price: Math.round(a.selling_price_half_tola_paisa / 100) },
+                    { id: "QUARTER_TOLA" as const, label: "1/4 Tola (2.92g)", price: Math.round(a.selling_price_quarter_tola_paisa / 100) },
+                    { id: "12ML" as const, label: "12 ml", price: Math.round((a.selling_price_per_ml_paisa * 12) / 100) },
+                    { id: "6ML" as const, label: "6 ml", price: Math.round((a.selling_price_per_ml_paisa * 6) / 100) },
+                    { id: "3ML" as const, label: "3 ml", price: Math.round((a.selling_price_per_ml_paisa * 3) / 100) },
+                    { id: "CUSTOM_TOLA" as const, label: "Custom Tola", price: Math.round((a.selling_price_per_tola_paisa * (attarCustomTola || 1)) / 100) },
+                    { id: "CUSTOM_ML" as const, label: "Custom ML", price: Math.round((a.selling_price_per_ml_paisa * (attarCustomMl || 1)) / 100) },
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => {
+                        setAttarPortionUnit(opt.id);
+                        setAttarCustomRateRupees("");
+                      }}
+                      className={`p-2 rounded-xl border text-left cursor-pointer transition-all ${
+                        attarPortionUnit === opt.id
+                          ? "border-emerald-500 bg-emerald-500/15 ring-1 ring-emerald-500/50 shadow-xs"
+                          : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 hover:border-emerald-500/40"
+                      }`}
+                    >
+                      <div className="text-[11px] font-bold text-slate-900 dark:text-slate-100">{opt.label}</div>
+                      <div className="text-[10px] font-mono font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                        Rs. {opt.price.toLocaleString()}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Custom Tola Input */}
+              {attarPortionUnit === "CUSTOM_TOLA" && (
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                      Enter Custom Tolas (e.g. 0.75, 1.5, 2):
+                    </label>
+                    <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-mono">
+                      Weight: {((attarCustomTola || 1) * 11.66).toFixed(2)}g
+                    </span>
+                  </div>
+                  <Input
+                    type="number"
+                    min={0.05}
+                    step="0.05"
+                    value={attarCustomTola || ""}
+                    onChange={(e) => {
+                      setAttarCustomTola(parseFloat(e.target.value) || 0);
+                      setAttarCustomRateRupees("");
+                    }}
+                    placeholder="1.0"
+                    className="h-8 font-mono font-bold"
+                  />
+                </div>
+              )}
+
+              {/* Custom ML Input */}
+              {attarPortionUnit === "CUSTOM_ML" && (
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                      Enter Custom Milliliters (ml):
+                    </label>
+                    <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-mono">
+                      Portion: {attarCustomMl || 1} ml
+                    </span>
+                  </div>
+                  <Input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={attarCustomMl || ""}
+                    onChange={(e) => {
+                      setAttarCustomMl(parseInt(e.target.value) || 0);
+                      setAttarCustomRateRupees("");
+                    }}
+                    placeholder="10"
+                    className="h-8 font-mono font-bold"
+                  />
+                </div>
+              )}
+
+              {/* Custom Selling Rate */}
+              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1.5">
+                <div className="flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  <span>Custom Selling Rate per Portion (PKR):</span>
+                  <span className="text-[11px] text-emerald-600 font-mono">
+                    Standard: Rs. {Math.round(unitPricePaisa / 100).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">Rs.</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={attarCustomRateRupees}
+                      onChange={(e) => setAttarCustomRateRupees(e.target.value)}
+                      placeholder={String(Math.round(unitPricePaisa / 100))}
+                      className="pl-9 h-9 font-mono font-bold text-sm"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAttarCustomRateRupees(Math.round(unitPricePaisa / 100).toString())}
+                    className="text-xs whitespace-nowrap active:scale-95"
+                  >
+                    Reset Standard
+                  </Button>
+                </div>
+              </div>
+
+              {/* Quantity & Actions */}
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">Bottles:</span>
+                  <button
+                    type="button"
+                    onClick={() => setAttarPortionQty(Math.max(1, attarPortionQty - 1))}
+                    className="w-7 h-7 rounded-lg bg-slate-200 dark:bg-slate-800 font-bold flex items-center justify-center cursor-pointer"
+                  >
+                    -
+                  </button>
+                  <span className="font-mono font-bold text-sm w-6 text-center">{attarPortionQty}</span>
+                  <button
+                    type="button"
+                    onClick={() => setAttarPortionQty(attarPortionQty + 1)}
+                    className="w-7 h-7 rounded-lg bg-slate-200 dark:bg-slate-800 font-bold flex items-center justify-center cursor-pointer"
+                  >
+                    +
+                  </button>
+                  <span className="text-[11px] text-slate-400 font-mono ml-1">
+                    ({unitLabel} • {unitVol})
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSelectedAttarForOnline(null)}
+                    className="cursor-pointer"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    onClick={handleConfirmAddAttar}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer"
+                  >
+                    Add to Order • Rs. {((effectiveUnitPricePaisa * attarPortionQty) / 100).toLocaleString()}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ========================================================================= */}
+      {/* MODAL 5: PRINT DISPATCH SLIP PREVIEW & SELECTOR (THERMAL VS A4) */}
+      {/* ========================================================================= */}
+      {isPrintModalOpen && printModalOrder && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950">
+              <div className="flex items-center gap-2.5">
+                <Printer className="w-5 h-5 text-amber-500" />
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                    Print Shipping Dispatch Slip — Preview
+                  </h2>
+                  <p className="text-[11px] text-slate-500 font-mono">
+                    Order: {printModalOrder.order_number} • Consignee: {printModalOrder.customer_name} ({printModalOrder.customer_phone})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsPrintModalOpen(false);
+                  setPrintModalOrder(null);
+                }}
+                className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body: Format Selector & Preview */}
+            <div className="p-5 overflow-y-auto space-y-4 flex-1">
+              {/* Format Selector */}
+              <div>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-2">
+                  Select Output Print Format:
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPrintSlipFormat("THERMAL_80MM")}
+                    className={`p-3 rounded-xl border flex items-center justify-center gap-2.5 font-bold cursor-pointer transition-all ${
+                      printSlipFormat === "THERMAL_80MM"
+                        ? "bg-amber-500/15 border-amber-500 text-amber-900 dark:text-amber-300 ring-2 ring-amber-500/40 shadow-xs"
+                        : "bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300"
+                    }`}
+                  >
+                    <Printer className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    <div className="text-left">
+                      <div className="text-xs font-bold">Thermal Slip (80mm)</div>
+                      <div className="text-[10px] font-normal text-slate-500">Roll receipt for courier parcel sticking</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPrintSlipFormat("A4")}
+                    className={`p-3 rounded-xl border flex items-center justify-center gap-2.5 font-bold cursor-pointer transition-all ${
+                      printSlipFormat === "A4"
+                        ? "bg-amber-500/15 border-amber-500 text-amber-900 dark:text-amber-300 ring-2 ring-amber-500/40 shadow-xs"
+                        : "bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300"
+                    }`}
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    <div className="text-left">
+                      <div className="text-xs font-bold">A4 Dispatch Consignment Note</div>
+                      <div className="text-[10px] font-normal text-slate-500">Official sheet with complete line items & courier box</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Live Preview Container */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+                    Document Preview ({printSlipFormat === "THERMAL_80MM" ? "80mm Thermal" : "A4 Sheet"}):
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-500">
+                    Live Formatted Rendering
+                  </span>
+                </div>
+                <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl bg-slate-200/50 dark:bg-slate-950/60 p-4 max-h-[46vh] overflow-y-auto flex justify-center">
+                  <div
+                    className="bg-white text-slate-900 shadow-md rounded p-4 w-full"
+                    style={{
+                      maxWidth: printSlipFormat === "THERMAL_80MM" ? "360px" : "100%",
+                      fontFamily: printSlipFormat === "THERMAL_80MM" ? "monospace" : "sans-serif",
+                    }}
+                    dangerouslySetInnerHTML={{
+                      __html: generateShippingSlipHtml(printModalOrder, printSlipFormat),
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setIsPrintModalOpen(false);
+                  setPrintModalOrder(null);
+                }}
+                className="cursor-pointer"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={() => {
+                  executePrintSlip(printModalOrder, printSlipFormat);
+                  setIsPrintModalOpen(false);
+                }}
+                className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold flex items-center gap-2 cursor-pointer shadow-sm px-5"
+              >
+                <Printer className="w-4 h-4 text-slate-950" />
+                <span>Print Dispatch Slip ({printSlipFormat === "THERMAL_80MM" ? "80mm" : "A4"})</span>
+              </Button>
+            </div>
           </div>
         </div>
       )}

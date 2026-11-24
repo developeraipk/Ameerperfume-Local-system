@@ -5443,6 +5443,12 @@ pub struct ExecutiveDashboardDto {
     #[serde(default)]
     pub today_tester_refunds_paisa: i64,
     #[serde(default)]
+    pub total_online_pending_paisa: i64,
+    #[serde(default)]
+    pub online_pending_orders_count: i64,
+    #[serde(default)]
+    pub total_online_collected_paisa: i64,
+    #[serde(default)]
     pub today_perfume_discount_paisa: i64,
     #[serde(default)]
     pub today_perfume_discount_units: i64,
@@ -6689,11 +6695,34 @@ impl DatabaseManager {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         ).unwrap_or((0, 0, 0, 0, 0));
 
-        let period_gross = retail_gross + wholesale_gross;
-        let period_discount = retail_discount + wholesale_discount;
-        let period_net_raw = retail_net_raw + wholesale_net_raw;
-        let period_orders = retail_orders + wholesale_orders;
-        let period_discount_orders = retail_discount_orders + wholesale_discount_orders;
+        let onl_cond = match period_type.as_str() {
+            "weekly" => "date(created_at) >= date('now', '-7 days')",
+            "monthly" => "strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')",
+            "yearly" => "strftime('%Y', created_at) = strftime('%Y', 'now')",
+            _ => "date(created_at) = date('now')",
+        };
+
+        let (online_gross, online_discount, online_net_raw, online_orders_cnt, online_discount_orders): (i64, i64, i64, i64, i64) = conn.query_row(
+            &format!(
+                "SELECT 
+                    COALESCE(SUM(subtotal_paisa + delivery_charges_paisa), 0),
+                    COALESCE(SUM(discount_paisa), 0),
+                    COALESCE(SUM(total_amount_paisa), 0),
+                    COUNT(*),
+                    COUNT(CASE WHEN discount_paisa > 0 THEN 1 END)
+                 FROM online_orders
+                 WHERE payment_status != 'RETURNED' AND {};",
+                onl_cond
+            ),
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        ).unwrap_or((0, 0, 0, 0, 0));
+
+        let period_gross = retail_gross + wholesale_gross + online_gross;
+        let period_discount = retail_discount + wholesale_discount + online_discount;
+        let period_net_raw = retail_net_raw + wholesale_net_raw + online_net_raw;
+        let period_orders = retail_orders + wholesale_orders + online_orders_cnt;
+        let period_discount_orders = retail_discount_orders + wholesale_discount_orders + online_discount_orders;
 
         // Net sales after customer return refunds
         let final_net_sales = (period_net_raw - period_refunds).max(0);
@@ -6780,12 +6809,43 @@ impl DatabaseManager {
         let attar_clean_ret_units = (attar_ret_units - attar_damaged_ret_units).max(0);
         let tester_clean_ret_units = (tester_ret_units - tester_damaged_ret_units).max(0);
 
-        let final_perfume = (net_retail_perfume + raw_wholesale_perfume - perfume_refunds).max(0);
-        let final_attar = (net_retail_attar + raw_wholesale_attar - attar_refunds).max(0);
+        let mut onl_items_stmt = conn.prepare(&format!(
+            "SELECT items_json FROM online_orders WHERE payment_status != 'RETURNED' AND {};",
+            onl_cond
+        )).ok();
+
+        let mut online_perfume_sales = 0i64;
+        let mut online_attar_sales = 0i64;
+        let mut online_perfume_units = 0i64;
+        let mut online_attar_units = 0i64;
+
+        if let Some(ref mut stmt) = onl_items_stmt {
+            if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                for json_str in rows.flatten() {
+                    if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
+                        for it in parsed {
+                            let itype = it.get("item_type").and_then(|v| v.as_str()).unwrap_or("PERFUME");
+                            let qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+                            let ltotal = it.get("line_total_paisa").and_then(|l| l.as_i64()).unwrap_or(0);
+                            if itype == "ATTAR" {
+                                online_attar_sales += ltotal;
+                                online_attar_units += qty;
+                            } else {
+                                online_perfume_sales += ltotal;
+                                online_perfume_units += qty;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let final_perfume = (net_retail_perfume + raw_wholesale_perfume + online_perfume_sales - perfume_refunds).max(0);
+        let final_attar = (net_retail_attar + raw_wholesale_attar + online_attar_sales - attar_refunds).max(0);
         let final_perfume_orders = retail_perfume_orders + wholesale_perfume_orders;
         let final_attar_orders = retail_attar_orders + wholesale_attar_orders;
-        let final_perfume_units = (retail_perfume_units + wholesale_perfume_units - perfume_clean_ret_units).max(0);
-        let final_attar_units = (retail_attar_units + wholesale_attar_units - attar_clean_ret_units).max(0);
+        let final_perfume_units = (retail_perfume_units + wholesale_perfume_units + online_perfume_units - perfume_clean_ret_units).max(0);
+        let final_attar_units = (retail_attar_units + wholesale_attar_units + online_attar_units - attar_clean_ret_units).max(0);
 
         // Tester dispense telemetry for selected period ("oil jaisa dashboard main attar , perfume k sath tester k record b hon")
         let (tester_samples, tester_ml, tester_sales, tester_orders): (i64, i64, i64, i64) = conn.query_row(
@@ -6837,8 +6897,8 @@ impl DatabaseManager {
             |r| Ok((r.get(0)?, r.get(1)?))
         ).unwrap_or((0, 0));
 
-        let final_perfume_gross_paisa = ret_perfume_gross + ws_perfume_gross;
-        let final_attar_gross_paisa = ret_attar_gross + ws_attar_gross;
+        let final_perfume_gross_paisa = ret_perfume_gross + ws_perfume_gross + online_perfume_sales;
+        let final_attar_gross_paisa = ret_attar_gross + ws_attar_gross + online_attar_sales;
         let final_tester_gross_paisa = ret_tester_gross;
 
         // Category discount breakdown (Retail + Wholesale)
@@ -7095,6 +7155,13 @@ impl DatabaseManager {
         }
 
         // 9. Payment Settlement Breakdown (Cash, EasyPaisa, JazzCash, Direct Bank) filtered by selected period
+        let onl_pay_cond = match period_type.as_str() {
+            "weekly" => "date(created_at) >= date('now', '-7 days')",
+            "monthly" => "strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')",
+            "yearly" => "strftime('%Y', created_at) = strftime('%Y', 'now')",
+            _ => "date(created_at) = date('now')",
+        };
+
         let gross_cash_received_paisa: i64 = conn.query_row(
             &format!("SELECT COALESCE(SUM(amount_paisa), 0) FROM (
                 SELECT sip.amount_paisa FROM sales_invoice_payments sip
@@ -7104,7 +7171,13 @@ impl DatabaseManager {
                 SELECT wp.amount_paid_paisa AS amount_paisa FROM wholesale_payments wp
                 LEFT JOIN wholesale_invoices wi ON wp.wholesale_invoice_id = wi.wholesale_invoice_id
                 WHERE wp.payment_method = 'CASH' AND COALESCE(wi.is_voided, 0) = 0 AND {}
-            );", inv_cond_si, wp_cond_wp),
+                UNION ALL
+                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                WHERE UPPER(oop.payment_method) = 'CASH' AND {}
+                UNION ALL
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                WHERE oo.advance_paid_paisa > 0 AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH' AND oo.payment_status != 'RETURNED' AND {}
+            );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
             [],
             |r| r.get(0)
         ).unwrap_or(0);
@@ -7126,7 +7199,13 @@ impl DatabaseManager {
                    OR wp.notes LIKE '%EasyPaisa%'
                    OR wp.notes LIKE '%easypaisa%')
                    AND COALESCE(wi.is_voided, 0) = 0 AND {}
-            );", inv_cond_si, wp_cond_wp),
+                UNION ALL
+                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%') AND {}
+                UNION ALL
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                WHERE oo.advance_paid_paisa > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%') AND oo.payment_status != 'RETURNED' AND {}
+            );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
             [],
             |r| r.get(0)
         ).unwrap_or(0);
@@ -7148,7 +7227,13 @@ impl DatabaseManager {
                    OR wp.notes LIKE '%JazzCash%'
                    OR wp.notes LIKE '%jazzcash%')
                    AND COALESCE(wi.is_voided, 0) = 0 AND {}
-            );", inv_cond_si, wp_cond_wp),
+                UNION ALL
+                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%') AND {}
+                UNION ALL
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                WHERE oo.advance_paid_paisa > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%') AND oo.payment_status != 'RETURNED' AND {}
+            );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
             [],
             |r| r.get(0)
         ).unwrap_or(0);
@@ -7240,6 +7325,12 @@ impl DatabaseManager {
                 SELECT wp.amount_paid_paisa AS amount_paisa FROM wholesale_payments wp
                 LEFT JOIN wholesale_invoices wi ON wp.wholesale_invoice_id = wi.wholesale_invoice_id
                 WHERE wp.payment_method = 'CASH' AND COALESCE(wi.is_voided, 0) = 0
+                UNION ALL
+                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                WHERE UPPER(oop.payment_method) = 'CASH'
+                UNION ALL
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                WHERE oo.advance_paid_paisa > 0 AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH' AND oo.payment_status != 'RETURNED'
             );",
             [],
             |r| r.get(0)
@@ -7262,6 +7353,12 @@ impl DatabaseManager {
                    OR wp.notes LIKE '%EasyPaisa%'
                    OR wp.notes LIKE '%easypaisa%')
                    AND COALESCE(wi.is_voided, 0) = 0
+                UNION ALL
+                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%')
+                UNION ALL
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                WHERE oo.advance_paid_paisa > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%') AND oo.payment_status != 'RETURNED'
             );",
             [],
             |r| r.get(0)
@@ -7284,6 +7381,12 @@ impl DatabaseManager {
                    OR wp.notes LIKE '%JazzCash%'
                    OR wp.notes LIKE '%jazzcash%')
                    AND COALESCE(wi.is_voided, 0) = 0
+                UNION ALL
+                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%')
+                UNION ALL
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                WHERE oo.advance_paid_paisa > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%') AND oo.payment_status != 'RETURNED'
             );",
             [],
             |r| r.get(0)
@@ -7335,28 +7438,62 @@ impl DatabaseManager {
         let all_time_easypaisa_paisa = (all_time_gross_ep - all_time_ep_refunds - all_time_ep_salaries).max(0);
         let all_time_jazzcash_paisa = (all_time_gross_jc - all_time_jc_refunds - all_time_jc_salaries).max(0);
 
+        let (total_online_pending_paisa, online_pending_orders_count): (i64, i64) = conn.query_row(
+            "SELECT COALESCE(SUM(cod_balance_paisa), 0), COUNT(*) FROM online_orders WHERE payment_status != 'PAID' AND payment_status != 'RETURNED';",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?))
+        ).unwrap_or((0, 0));
+
+        let total_online_collected_paisa: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(amount_paid_paisa), 0) FROM online_order_payments;",
+            [],
+            |r| r.get(0)
+        ).unwrap_or(0);
+
         // 10. Channel breakdown (Shop / WhatsApp / Website / Phone) - Normalized so walk-ins are unified
         let mut ch_stmt = conn.prepare(&format!("
             SELECT 
-                CASE 
-                    WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('SHOP', 'WALK_IN', 'COUNTER', 'STORE') THEN 'SHOP'
-                    WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('WHATSAPP', 'WA') THEN 'WHATSAPP'
-                    WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('WEBSITE', 'WEB', 'ONLINE') THEN 'WEBSITE'
-                    WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('PHONE', 'CALL') THEN 'PHONE'
-                    ELSE 'SHOP'
-                END AS ch,
-                COUNT(DISTINCT si.invoice_id),
-                COALESCE(SUM(si.net_payable_paisa), 0),
-                COALESCE(SUM(sii.units), 0)
-            FROM sales_invoices si
-            LEFT JOIN (
-                SELECT invoice_id, SUM(quantity) AS units
-                FROM sales_invoice_items
-                GROUP BY invoice_id
-            ) sii ON si.invoice_id = sii.invoice_id
-            WHERE si.is_voided = 0 AND {}
+                ch,
+                SUM(cnt) AS total_orders,
+                SUM(rev) AS total_revenue,
+                SUM(units) AS total_units
+            FROM (
+                SELECT 
+                    CASE 
+                        WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('SHOP', 'WALK_IN', 'COUNTER', 'STORE') THEN 'SHOP'
+                        WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('WHATSAPP', 'WA') THEN 'WHATSAPP'
+                        WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('WEBSITE', 'WEB', 'ONLINE') THEN 'WEBSITE'
+                        WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('PHONE', 'CALL') THEN 'PHONE'
+                        ELSE 'SHOP'
+                    END AS ch,
+                    COUNT(DISTINCT si.invoice_id) AS cnt,
+                    COALESCE(SUM(si.net_payable_paisa), 0) AS rev,
+                    COALESCE(SUM(sii.units), 0) AS units
+                FROM sales_invoices si
+                LEFT JOIN (
+                    SELECT invoice_id, SUM(quantity) AS units
+                    FROM sales_invoice_items
+                    GROUP BY invoice_id
+                ) sii ON si.invoice_id = sii.invoice_id
+                WHERE si.is_voided = 0 AND {}
+                GROUP BY ch
+
+                UNION ALL
+
+                SELECT 
+                    CASE 
+                        WHEN UPPER(channel) LIKE '%WHATSAPP%' THEN 'WHATSAPP'
+                        ELSE 'WEBSITE'
+                    END AS ch,
+                    COUNT(order_id) AS cnt,
+                    COALESCE(SUM(total_amount_paisa), 0) AS rev,
+                    COUNT(order_id) AS units
+                FROM online_orders
+                WHERE payment_status != 'RETURNED' AND {}
+                GROUP BY ch
+            )
             GROUP BY ch;
-        ", inv_cond_si)).map_err(|e| e.to_string())?;
+        ", inv_cond_si, onl_cond)).map_err(|e| e.to_string())?;
 
         let mut channel_breakdown = Vec::new();
         let ch_rows = ch_stmt.query_map([], |r| {
@@ -7516,6 +7653,9 @@ impl DatabaseManager {
             today_perfume_refunds_paisa: perfume_refunds,
             today_attar_refunds_paisa: attar_refunds,
             today_tester_refunds_paisa: tester_refunds,
+            total_online_pending_paisa,
+            online_pending_orders_count,
+            total_online_collected_paisa,
             today_perfume_discount_paisa: final_perfume_discount_paisa,
             today_perfume_discount_units: final_perfume_discount_units,
             today_attar_discount_paisa: final_attar_discount_paisa,

@@ -9,6 +9,7 @@ import {
   EmployeeSalaryPayout,
   WholesaleInvoiceSummary,
   WholesaleCustomer,
+  OnlineOrder,
 } from "@/types/database";
 import {
   getInventoryValuation,
@@ -19,6 +20,7 @@ import {
   getEmployeeSalaryPayouts,
   getWholesaleInvoices,
   getWholesaleCustomers,
+  getOnlineOrders,
   exportDatabaseToDesktop,
   openDatabaseFolder,
 } from "@/lib/tauri-bridge";
@@ -47,6 +49,7 @@ import {
   FileSpreadsheet,
   Briefcase,
   Clock,
+  Globe,
 } from "lucide-react";
 
 interface ReportsProps {
@@ -54,10 +57,12 @@ interface ReportsProps {
 }
 
 type PeriodFilter = "TODAY" | "WEEK" | "MONTH" | "YEAR" | "ALL";
-type ActiveTab = "SALES" | "WHOLESALE" | "INVENTORY" | "EXPENSES" | "BACKUP";
+type ChannelAuditFilter = "ALL" | "POS" | "ONLINE" | "WHOLESALE";
+type ActiveTab = "SALES" | "ONLINE" | "WHOLESALE" | "INVENTORY" | "EXPENSES" | "BACKUP";
 
 export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
   const [period, setPeriod] = useState<PeriodFilter>("MONTH");
+  const [channelFilter, setChannelFilter] = useState<ChannelAuditFilter>("ALL");
   const [activeTab, setActiveTab] = useState<ActiveTab>("SALES");
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -65,6 +70,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
   // Datasets
   const [inventoryVal, setInventoryVal] = useState<InventoryValuationReport | null>(null);
   const [sales, setSales] = useState<RecentSaleSummary[]>([]);
+  const [onlineOrders, setOnlineOrders] = useState<OnlineOrder[]>([]);
   const [products, setProducts] = useState<FinishedProduct[]>([]);
   const [attars, setAttars] = useState<AttarProduct[]>([]);
   const [expenses, setExpenses] = useState<PettyExpense[]>([]);
@@ -74,6 +80,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
 
   // Search queries for tables
   const [salesSearch, setSalesSearch] = useState("");
+  const [onlineSearch, setOnlineSearch] = useState("");
   const [wholesaleSearch, setWholesaleSearch] = useState("");
   const [inventorySearch, setInventorySearch] = useState("");
   const [expensesSearch, setExpensesSearch] = useState("");
@@ -82,9 +89,10 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
     setLoading(true);
     setFeedback(null);
     try {
-      const [inv, recentSalesList, prods, atts, expList, salList, wInvoices, wCustomers] = await Promise.all([
+      const [inv, recentSalesList, onlOrders, prods, atts, expList, salList, wInvoices, wCustomers] = await Promise.all([
         getInventoryValuation(),
         getRecentSales(2000),
+        getOnlineOrders(),
         getProducts(),
         getAttars(),
         getPettyExpenses(),
@@ -95,6 +103,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
 
       setInventoryVal(inv);
       setSales(recentSalesList);
+      setOnlineOrders(onlOrders || []);
       setProducts(prods);
       setAttars(atts);
       setExpenses(expList);
@@ -199,6 +208,23 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
     });
   }, [wholesaleInvoices, filterByPeriod, wholesaleSearch]);
 
+  // Online Orders Filtered Dataset
+  const filteredOnlineOrders = useMemo(() => {
+    return onlineOrders.filter((o) => {
+      if (!filterByPeriod(o.created_at)) return false;
+      if (!onlineSearch.trim()) return true;
+      const q = onlineSearch.toLowerCase();
+      return (
+        o.order_number.toLowerCase().includes(q) ||
+        o.customer_name.toLowerCase().includes(q) ||
+        o.customer_phone.toLowerCase().includes(q) ||
+        o.city.toLowerCase().includes(q) ||
+        (o.courier_partner && o.courier_partner.toLowerCase().includes(q)) ||
+        (o.tracking_number && o.tracking_number.toLowerCase().includes(q))
+      );
+    });
+  }, [onlineOrders, filterByPeriod, onlineSearch]);
+
   // Aggregate Metrics for Header Cards
   const totalRetailNetRevenuePaisa = filteredSales.reduce((acc, s) => acc + s.net_payable_paisa, 0);
   const totalRetailDiscountsPaisa = filteredSales.reduce((acc, s) => acc + (s.discount_paisa || 0), 0);
@@ -206,22 +232,65 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
   const totalRetailBottlesSold = filteredSales.reduce((acc, s) => acc + s.total_units, 0);
 
   // Wholesale Metrics:
-  // Wholesale Invoices Billed, Realized Cash Paid, and Pending Credit (Udar)
-  const _totalWholesaleBilledPaisa = filteredWholesaleInvoices.reduce((acc, w) => acc + w.net_total_paisa, 0);
-  void _totalWholesaleBilledPaisa;
+  const totalWholesaleBilledPaisa = filteredWholesaleInvoices.reduce((acc, w) => acc + w.net_total_paisa, 0);
   const totalWholesalePaidPaisa = filteredWholesaleInvoices.reduce((acc, w) => acc + w.paid_amount_paisa, 0);
   const totalWholesaleUdarPaisa = filteredWholesaleInvoices.reduce((acc, w) => acc + w.balance_due_paisa, 0);
   const totalAllCustomersUdarPaisa = wholesaleCustomers.reduce((acc, c) => acc + (c.current_balance_paisa || 0), 0);
   const totalPendingUdarToDisplay = totalWholesaleUdarPaisa > 0 ? totalWholesaleUdarPaisa : totalAllCustomersUdarPaisa;
+  const totalWholesaleDiscountsPaisa = 0;
+  const totalWholesaleDiscountedCount = 0;
+  const totalWholesaleUnits = filteredWholesaleInvoices.length;
 
-  // Realized Net Revenue: Retail Revenue + Wholesale Cash Received in period
-  // (Unpaid Wholesale Credit / Udar is NOT included until received!)
-  const totalCombinedRealizedRevenuePaisa = totalRetailNetRevenuePaisa + totalWholesalePaidPaisa;
+  // Online Orders Metrics:
+  const totalOnlineBilledPaisa = filteredOnlineOrders.reduce((acc, o) => acc + (o.payment_status !== "RETURNED" ? o.total_amount_paisa : 0), 0);
+  const totalOnlineCollectedPaisa = filteredOnlineOrders.reduce((acc, o) => acc + (o.payment_status !== "RETURNED" ? o.advance_paid_paisa : 0), 0);
+  const totalOnlinePendingCodPaisa = filteredOnlineOrders.reduce((acc, o) => acc + (o.payment_status !== "RETURNED" ? o.cod_balance_paisa : 0), 0);
+  const totalOnlineDiscountsPaisa = filteredOnlineOrders.reduce((acc, o) => acc + (o.discount_paisa || 0), 0);
+  const totalOnlineDiscountedOrdersCount = filteredOnlineOrders.filter((o) => (o.discount_paisa || 0) > 0).length;
+  const totalOnlineUnits = filteredOnlineOrders.reduce((acc, o) => {
+    if (o.payment_status === "RETURNED") return acc;
+    try {
+      const its = JSON.parse(o.items_json);
+      return acc + its.reduce((sub: number, it: any) => sub + (it.quantity || 1), 0);
+    } catch {
+      return acc + 1;
+    }
+  }, 0);
+
+  // Channel-Filtered Metrics for Header KPIs
+  let displayRealizedRevenuePaisa = 0;
+  let displayDiscountsPaisa = 0;
+  let displayUnitsSold = 0;
+  let displayDiscountedCount = 0;
+
+  if (channelFilter === "POS") {
+    displayRealizedRevenuePaisa = totalRetailNetRevenuePaisa;
+    displayDiscountsPaisa = totalRetailDiscountsPaisa;
+    displayUnitsSold = totalRetailBottlesSold;
+    displayDiscountedCount = totalRetailDiscountedInvoicesCount;
+  } else if (channelFilter === "ONLINE") {
+    displayRealizedRevenuePaisa = totalOnlineCollectedPaisa;
+    displayDiscountsPaisa = totalOnlineDiscountsPaisa;
+    displayUnitsSold = totalOnlineUnits;
+    displayDiscountedCount = totalOnlineDiscountedOrdersCount;
+  } else if (channelFilter === "WHOLESALE") {
+    displayRealizedRevenuePaisa = totalWholesalePaidPaisa;
+    displayDiscountsPaisa = totalWholesaleDiscountsPaisa;
+    displayUnitsSold = totalWholesaleUnits;
+    displayDiscountedCount = totalWholesaleDiscountedCount;
+  } else {
+    // ALL Channels Combined
+    displayRealizedRevenuePaisa = totalRetailNetRevenuePaisa + totalWholesalePaidPaisa + totalOnlineCollectedPaisa;
+    displayDiscountsPaisa = totalRetailDiscountsPaisa + totalWholesaleDiscountsPaisa + totalOnlineDiscountsPaisa;
+    displayUnitsSold = totalRetailBottlesSold + totalWholesaleUnits + totalOnlineUnits;
+    displayDiscountedCount = totalRetailDiscountedInvoicesCount + totalWholesaleDiscountedCount + totalOnlineDiscountedOrdersCount;
+  }
+
   const totalExpensesPaisa = filteredExpenses.reduce((acc, e) => acc + e.amount_paisa, 0);
   const totalSalariesPaisa = filteredSalaries.reduce((acc, s) => acc + s.amount_paisa, 0);
 
   // Net Operating Margin = Realized Cash Revenue - Petty Expenses - Salaries
-  const netEstimatedMarginPaisa = totalCombinedRealizedRevenuePaisa - totalExpensesPaisa - totalSalariesPaisa;
+  const netEstimatedMarginPaisa = displayRealizedRevenuePaisa - totalExpensesPaisa - totalSalariesPaisa;
 
   const handleExportDatabase = async () => {
     try {
@@ -254,11 +323,13 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
       filteredExpenses,
       filteredSalaries,
       period,
-      `Ameer_Perfumes_Master_Consolidated_Audit`
+      `Ameer_Perfumes_Master_Consolidated_Audit`,
+      filteredWholesaleInvoices,
+      filteredOnlineOrders
     );
     setFeedback({
       type: "success",
-      text: `✓ Master Consolidated Audit Report (all 5 core tables) exported to Excel (.csv) successfully! Check your Downloads folder.`,
+      text: `✓ Master Consolidated Audit Report (All core tables including POS, Online, Wholesale, Stock & Expenses) exported to Excel (.csv) successfully! Check your Downloads folder.`,
     });
   };
 
@@ -277,16 +348,11 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
 
     const totalSalesUnits = filteredSales.reduce((acc, s) => acc + s.total_units, 0);
     const totalSalesGross = filteredSales.reduce((acc, s) => acc + s.net_payable_paisa, 0);
-    const returnedInvoicesCount = filteredSales.filter((s) => s.is_returned).length;
-
     const totalBottles = products.reduce((acc, p) => acc + p.current_stock_units, 0);
     const totalCostValPaisa = products.reduce((acc, p) => acc + ((p.latest_batch_cost_paisa || 0) * p.current_stock_units), 0);
     const totalRetailValPaisa = products.reduce((acc, p) => acc + (p.retail_price_paisa * p.current_stock_units), 0);
-
     const totalExpPaisa = filteredExpenses.reduce((acc, e) => acc + e.amount_paisa, 0);
     const totalSalPaisa = filteredSalaries.reduce((acc, s) => acc + s.amount_paisa, 0);
-    const combinedOutflow = totalExpPaisa + totalSalPaisa;
-    const netOperatingBalance = totalSalesGross - combinedOutflow;
 
     // 1. Sales Rows
     const salesRowsHtml = filteredSales
@@ -427,6 +493,107 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
       })
       .join("");
 
+    // 6. Online Orders Rows
+    const onlineRowsHtml = filteredOnlineOrders
+      .map((o, idx) => {
+        let itemsCount = 0;
+        let itemsSummary = "";
+        try {
+          const parsed = JSON.parse(o.items_json);
+          itemsCount = parsed.reduce((sum: number, it: any) => sum + (it.quantity || 1), 0);
+          itemsSummary = parsed.map((it: any) => `• ${it.product_name} (x${it.quantity || 1})`).join(", ");
+        } catch {
+          itemsSummary = "Assorted Fragrance Items";
+          itemsCount = 1;
+        }
+
+        const orderDate = new Date(o.created_at).toLocaleString("en-PK", {
+          dateStyle: "short",
+          timeStyle: "short",
+        });
+
+        let payBadge = "";
+        if (o.payment_status === "PAID") {
+          payBadge = `<span style="background: #dcfce7; color: #166534; border: 1px solid #86efac; padding: 1px 4px; border-radius: 3px; font-weight: 800; font-size: 8px;">COLLECTED</span>`;
+        } else if (o.payment_status === "PARTIAL") {
+          payBadge = `<span style="background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; padding: 1px 4px; border-radius: 3px; font-weight: 800; font-size: 8px;">PARTIAL ADV</span>`;
+        } else if (o.payment_status === "RETURNED") {
+          payBadge = `<span style="background: #fee2e2; color: #991b1b; border: 1px solid #f87171; padding: 1px 4px; border-radius: 3px; font-weight: 800; font-size: 8px;">RETURNED</span>`;
+        } else {
+          payBadge = `<span style="background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; padding: 1px 4px; border-radius: 3px; font-weight: 800; font-size: 8px;">PENDING COD</span>`;
+        }
+
+        return `
+          <tr style="border-bottom: 1px solid #e2e8f0; font-size: 9px; background: ${idx % 2 === 0 ? "#ffffff" : "#f8fafc"};">
+            <td style="padding: 4px 3px; text-align: center; color: #64748b;">${idx + 1}</td>
+            <td style="padding: 4px 5px; font-family: monospace; font-weight: 800; color: #0891b2; white-space: nowrap;">${o.order_number}</td>
+            <td style="padding: 4px 5px; font-family: monospace; color: #475569; white-space: nowrap;">${orderDate}</td>
+            <td style="padding: 4px 5px; text-align: center; font-size: 8px; font-weight: 800; color: ${o.channel === "WHATSAPP" ? "#16a34a" : "#2563eb"};">${o.channel}</td>
+            <td style="padding: 4px 5px;">
+              <div style="font-weight: 700; color: #0f172a;">${o.customer_name}</div>
+              <div style="font-size: 8px; font-family: monospace; color: #64748b;">${o.customer_phone} • ${o.city}</div>
+            </td>
+            <td style="padding: 4px 5px; font-size: 8.5px; max-width: 200px; color: #334155;">${itemsSummary}</td>
+            <td style="padding: 4px 5px; text-align: center; font-family: monospace; font-weight: 700;">${itemsCount}</td>
+            <td style="padding: 4px 5px; text-align: right; font-family: monospace; font-weight: 800; color: #0f172a; white-space: nowrap;">
+              Rs. ${formatRs(o.total_amount_paisa)}
+              ${(o.cod_balance_paisa || 0) > 0 ? `<div style="font-size: 7.5px; color: #d97706; font-weight: 700;">COD: Rs. ${formatRs(o.cod_balance_paisa)}</div>` : ""}
+            </td>
+            <td style="padding: 4px 3px; text-align: center;">${payBadge}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    // 7. Wholesale Rows
+    const wholesaleRowsHtml = filteredWholesaleInvoices
+      .map((w, idx) => {
+        const invDate = new Date(w.invoice_date).toLocaleString("en-PK", {
+          dateStyle: "short",
+          timeStyle: "short",
+        });
+
+        let payBadge = "";
+        if (w.payment_status === "PAID") {
+          payBadge = `<span style="background: #dcfce7; color: #166534; border: 1px solid #86efac; padding: 1px 4px; border-radius: 3px; font-weight: 800; font-size: 8px;">PAID</span>`;
+        } else if (w.payment_status === "PARTIAL") {
+          payBadge = `<span style="background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; padding: 1px 4px; border-radius: 3px; font-weight: 800; font-size: 8px;">PARTIAL UDAR</span>`;
+        } else {
+          payBadge = `<span style="background: #fee2e2; color: #991b1b; border: 1px solid #f87171; padding: 1px 4px; border-radius: 3px; font-weight: 800; font-size: 8px;">UNPAID UDAR</span>`;
+        }
+
+        return `
+          <tr style="border-bottom: 1px solid #e2e8f0; font-size: 9px; background: ${idx % 2 === 0 ? "#ffffff" : "#f8fafc"};">
+            <td style="padding: 4px 3px; text-align: center; color: #64748b;">${idx + 1}</td>
+            <td style="padding: 4px 5px; font-family: monospace; font-weight: 800; color: #4338ca; white-space: nowrap;">${w.invoice_number}</td>
+            <td style="padding: 4px 5px; font-family: monospace; color: #475569; white-space: nowrap;">${invDate}</td>
+            <td style="padding: 4px 5px; font-weight: 700; color: #0f172a;">${w.customer_name}</td>
+            <td style="padding: 4px 5px; color: #475569;">${w.salesperson_name || "Direct Commercial"}</td>
+            <td style="padding: 4px 5px; text-align: center; font-family: monospace; font-size: 8px; font-weight: 700;">${w.order_source || "DIRECT"}</td>
+            <td style="padding: 4px 5px; text-align: right; font-family: monospace; font-weight: 800; color: #0f172a; white-space: nowrap;">
+              Rs. ${formatRs(w.net_total_paisa)}
+            </td>
+            <td style="padding: 4px 5px; text-align: right; font-family: monospace; font-weight: 800; color: #166534; white-space: nowrap;">
+              Rs. ${formatRs(w.paid_amount_paisa)}
+            </td>
+            <td style="padding: 4px 5px; text-align: right; font-family: monospace; font-weight: 800; color: ${w.balance_due_paisa > 0 ? "#dc2626" : "#64748b"}; white-space: nowrap;">
+              Rs. ${formatRs(w.balance_due_paisa)}
+            </td>
+            <td style="padding: 4px 3px; text-align: center;">${payBadge}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const channelLabelText =
+      channelFilter === "ALL"
+        ? "All Channels Consolidated"
+        : channelFilter === "POS"
+        ? "Retail POS Counter Only"
+        : channelFilter === "ONLINE"
+        ? "Online Orders (WhatsApp & Web)"
+        : "Wholesale Commercial";
+
     const masterHtml = `
       <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #0f172a; width: 100%;">
         <!-- Header -->
@@ -441,49 +608,61 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </div>
           <div style="text-align: right;">
             <div style="font-size: 15px; font-weight: 900; color: #0f172a; letter-spacing: 0.5px;">MASTER CONSOLIDATED AUDIT REPORT</div>
-            <div style="font-size: 10px; font-weight: 700; color: #b45309; margin-top: 1px;">Period: ${period} • All 5 Core Tables</div>
+            <div style="font-size: 10px; font-weight: 700; color: #b45309; margin-top: 1px;">Period: ${period} • Filter: ${channelLabelText}</div>
             <div style="font-size: 9px; color: #64748b; margin-top: 1px;">Generated: ${printedAt}</div>
             <div style="font-size: 8.5px; color: #64748b;">Auditor: <strong>${userLabel}</strong></div>
           </div>
         </div>
 
-        <!-- Executive KPI Cards Grid -->
-        <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-bottom: 16px;">
+        <!-- Executive KPI Cards Grid (2 rows of 4 cards) -->
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 16px;">
           <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 8px;">
-            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #64748b;">Sales Revenue</div>
-            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #0f172a; margin-top: 1px;">Rs. ${formatRs(totalSalesGross)}</div>
-            <div style="font-size: 7.5px; color: #64748b;">${filteredSales.length} Invoices</div>
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #64748b;">Realized Sales Revenue</div>
+            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #15803d; margin-top: 1px;">Rs. ${formatRs(displayRealizedRevenuePaisa)}</div>
+            <div style="font-size: 7.5px; color: #64748b;">Collected Funds</div>
           </div>
-          <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 8px;">
-            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #64748b;">Units Sold</div>
-            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #0f172a; margin-top: 1px;">${totalSalesUnits} Units</div>
-            <div style="font-size: 7.5px; color: #dc2626;">${returnedInvoicesCount} Returns</div>
+          <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 6px 8px;">
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #b45309;">Wholesale Credit (Udar)</div>
+            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #d97706; margin-top: 1px;">Rs. ${formatRs(totalPendingUdarToDisplay)}</div>
+            <div style="font-size: 7.5px; color: #b45309;">Pending Wholesale Receivables</div>
           </div>
-          <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 8px;">
-            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #64748b;">Perfumes Stock</div>
-            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #0f172a; margin-top: 1px;">${totalBottles} Btls</div>
-            <div style="font-size: 7.5px; color: #64748b;">Rs. ${formatRs(totalCostValPaisa)} Cost</div>
+          <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 6px 8px;">
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #1d4ed8;">Online Pending (COD)</div>
+            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #2563eb; margin-top: 1px;">Rs. ${formatRs(totalOnlinePendingCodPaisa)}</div>
+            <div style="font-size: 7.5px; color: #1e40af;">Courier Cash on Delivery</div>
           </div>
-          <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 8px;">
-            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #64748b;">Attars Count</div>
-            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #0891b2; margin-top: 1px;">${attars.length} SKUs</div>
-            <div style="font-size: 7.5px; color: #64748b;">Concentrated Oils</div>
+          <div style="background: #fdf2f8; border: 1px solid #fbcfe8; border-radius: 6px; padding: 6px 8px;">
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #be185d;">Discounts Given</div>
+            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #db2777; margin-top: 1px;">Rs. ${formatRs(displayDiscountsPaisa)}</div>
+            <div style="font-size: 7.5px; color: #be185d;">${displayDiscountedCount} Discounted Orders</div>
+          </div>
+          <div style="background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 6px; padding: 6px 8px;">
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #7e22ce;">Bottles & Items Sold</div>
+            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #9333ea; margin-top: 1px;">${displayUnitsSold} Units</div>
+            <div style="font-size: 7.5px; color: #7e22ce;">Channel Volume</div>
           </div>
           <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 6px 8px;">
-            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #991b1b;">Shop Outflows</div>
-            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #dc2626; margin-top: 1px;">Rs. ${formatRs(combinedOutflow)}</div>
-            <div style="font-size: 7.5px; color: #991b1b;">Exp + Salaries</div>
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #991b1b;">Shop Petty Expenses</div>
+            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #dc2626; margin-top: 1px;">Rs. ${formatRs(totalExpensesPaisa)}</div>
+            <div style="font-size: 7.5px; color: #991b1b;">${filteredExpenses.length} Vouchers</div>
           </div>
-          <div style="background: ${netOperatingBalance >= 0 ? "#f0fdf4" : "#fef2f2"}; border: 1px solid ${netOperatingBalance >= 0 ? "#bbf7d0" : "#fecaca"}; border-radius: 6px; padding: 6px 8px;">
-            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: ${netOperatingBalance >= 0 ? "#166534" : "#991b1b"};">Net Cashflow</div>
-            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: ${netOperatingBalance >= 0 ? "#15803d" : "#dc2626"}; margin-top: 1px;">Rs. ${formatRs(netOperatingBalance)}</div>
-            <div style="font-size: 7.5px; color: ${netOperatingBalance >= 0 ? "#166534" : "#991b1b"};">Operating Balance</div>
+          <div style="background: #fff7ed; border: 1px solid #ffedd5; border-radius: 6px; padding: 6px 8px;">
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #c2410c;">Staff Salaries Paid</div>
+            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #ea580c; margin-top: 1px;">Rs. ${formatRs(totalSalariesPaisa)}</div>
+            <div style="font-size: 7.5px; color: #c2410c;">${filteredSalaries.length} Payouts</div>
+          </div>
+          <div style="background: ${netEstimatedMarginPaisa >= 0 ? "#f0fdf4" : "#fef2f2"}; border: 1px solid ${netEstimatedMarginPaisa >= 0 ? "#bbf7d0" : "#fecaca"}; border-radius: 6px; padding: 6px 8px;">
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: ${netEstimatedMarginPaisa >= 0 ? "#166534" : "#991b1b"};">Net Operating Margin</div>
+            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: ${netEstimatedMarginPaisa >= 0 ? "#15803d" : "#dc2626"}; margin-top: 1px;">Rs. ${formatRs(netEstimatedMarginPaisa)}</div>
+            <div style="font-size: 7.5px; color: ${netEstimatedMarginPaisa >= 0 ? "#166534" : "#991b1b"};">Realized Cashflow</div>
           </div>
         </div>
 
+        <!-- CONDITIONAL CHANNEL TABLES -->
+        ${(channelFilter === "ALL" || channelFilter === "POS") ? `
         <!-- TABLE 1: Sales & Transactions Audit -->
         <div style="margin-top: 12px; margin-bottom: 4px; border-bottom: 1.5px solid #0f172a; padding-bottom: 3px; display: flex; justify-content: space-between; align-items: baseline;">
-          <span style="font-size: 11px; font-weight: 900; text-transform: uppercase; color: #0f172a; letter-spacing: 0.5px;">1. Sales & Transactions History Audit</span>
+          <span style="font-size: 11px; font-weight: 900; text-transform: uppercase; color: #0f172a; letter-spacing: 0.5px;">1. Retail POS Counter Sales & Transactions Audit</span>
           <span style="font-size: 9px; font-family: monospace; color: #64748b;">${filteredSales.length} Invoices • Period: ${period}</span>
         </div>
         <table style="width: 100%; border-collapse: collapse; margin-bottom: 14px;">
@@ -514,6 +693,78 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             </tr>
           </tfoot>
         </table>
+        ` : ""}
+
+        ${(channelFilter === "ALL" || channelFilter === "ONLINE") ? `
+        <!-- TABLE: Online Orders & Social Commerce Transactions (WhatsApp & Web) -->
+        <div style="margin-top: 14px; margin-bottom: 4px; border-bottom: 1.5px solid #0891b2; padding-bottom: 3px; display: flex; justify-content: space-between; align-items: baseline; page-break-before: auto;">
+          <span style="font-size: 11px; font-weight: 900; text-transform: uppercase; color: #0891b2; letter-spacing: 0.5px;">Online & Social Commerce Orders (WhatsApp & Web)</span>
+          <span style="font-size: 9px; font-family: monospace; color: #64748b;">${filteredOnlineOrders.length} Orders • Period: ${period}</span>
+        </div>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 14px;">
+          <thead>
+            <tr style="background: #0891b2; color: #ffffff; font-size: 8.5px; text-transform: uppercase;">
+              <th style="padding: 5px 3px; text-align: center; width: 24px;">#</th>
+              <th style="padding: 5px 4px; text-align: left; width: 90px;">Order #</th>
+              <th style="padding: 5px 4px; text-align: left; width: 85px;">Date & Time</th>
+              <th style="padding: 5px 4px; text-align: center; width: 65px;">Source</th>
+              <th style="padding: 5px 4px; text-align: left; width: 115px;">Customer</th>
+              <th style="padding: 5px 4px; text-align: left;">Items Summary</th>
+              <th style="padding: 5px 4px; text-align: center; width: 35px;">Qty</th>
+              <th style="padding: 5px 4px; text-align: right; width: 90px;">Total & COD</th>
+              <th style="padding: 5px 3px; text-align: center; width: 75px;">Payment</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${onlineRowsHtml || `<tr><td colspan="9" style="padding: 10px; text-align: center; color: #64748b; font-size: 9px;">No online orders found for this period.</td></tr>`}
+          </tbody>
+          <tfoot>
+            <tr style="background: #ecfeff; font-size: 9.5px; font-weight: 800; border-top: 1.5px solid #0891b2;">
+              <td colspan="6" style="padding: 5px 4px; text-align: right; text-transform: uppercase;">Total Online Billed:</td>
+              <td style="padding: 5px 4px; text-align: center; font-family: monospace;">${totalOnlineUnits}</td>
+              <td style="padding: 5px 4px; text-align: right; font-family: monospace; color: #0891b2;">Rs. ${formatRs(totalOnlineBilledPaisa)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+        ` : ""}
+
+        ${(channelFilter === "ALL" || channelFilter === "WHOLESALE") ? `
+        <!-- TABLE: Wholesale Commercial Invoices Ledger -->
+        <div style="margin-top: 14px; margin-bottom: 4px; border-bottom: 1.5px solid #4338ca; padding-bottom: 3px; display: flex; justify-content: space-between; align-items: baseline; page-break-before: auto;">
+          <span style="font-size: 11px; font-weight: 900; text-transform: uppercase; color: #4338ca; letter-spacing: 0.5px;">Wholesale Commercial Invoices & Ledger</span>
+          <span style="font-size: 9px; font-family: monospace; color: #64748b;">${filteredWholesaleInvoices.length} Invoices • Period: ${period}</span>
+        </div>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 14px;">
+          <thead>
+            <tr style="background: #4338ca; color: #ffffff; font-size: 8.5px; text-transform: uppercase;">
+              <th style="padding: 5px 3px; text-align: center; width: 24px;">#</th>
+              <th style="padding: 5px 4px; text-align: left; width: 90px;">Invoice #</th>
+              <th style="padding: 5px 4px; text-align: left; width: 85px;">Date & Time</th>
+              <th style="padding: 5px 4px; text-align: left;">Customer & Merchant</th>
+              <th style="padding: 5px 4px; text-align: left; width: 90px;">Salesperson</th>
+              <th style="padding: 5px 4px; text-align: center; width: 55px;">Source</th>
+              <th style="padding: 5px 4px; text-align: right; width: 85px;">Net Total</th>
+              <th style="padding: 5px 4px; text-align: right; width: 85px;">Paid Amount</th>
+              <th style="padding: 5px 4px; text-align: right; width: 85px;">Udar (Due)</th>
+              <th style="padding: 5px 3px; text-align: center; width: 75px;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${wholesaleRowsHtml || `<tr><td colspan="10" style="padding: 10px; text-align: center; color: #64748b; font-size: 9px;">No wholesale invoices found for this period.</td></tr>`}
+          </tbody>
+          <tfoot>
+            <tr style="background: #eef2ff; font-size: 9.5px; font-weight: 800; border-top: 1.5px solid #4338ca;">
+              <td colspan="5" style="padding: 5px 4px; text-align: right; text-transform: uppercase;">Total Wholesale:</td>
+              <td style="padding: 5px 4px; text-align: center; font-family: monospace;">${filteredWholesaleInvoices.length} Inv</td>
+              <td style="padding: 5px 4px; text-align: right; font-family: monospace; color: #4338ca;">Rs. ${formatRs(totalWholesaleBilledPaisa)}</td>
+              <td style="padding: 5px 4px; text-align: right; font-family: monospace; color: #166534;">Rs. ${formatRs(totalWholesalePaidPaisa)}</td>
+              <td style="padding: 5px 4px; text-align: right; font-family: monospace; color: #dc2626;">Rs. ${formatRs(totalWholesaleUdarPaisa)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+        ` : ""}
 
         <!-- TABLE 2: Finished Perfumes Stock & Inventory Valuation -->
         <div style="margin-top: 14px; margin-bottom: 4px; border-bottom: 1.5px solid #0f172a; padding-bottom: 3px; display: flex; justify-content: space-between; align-items: baseline; page-break-before: auto;">
@@ -1187,7 +1438,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </p>
         </div>
 
-        {/* Global Period Selector & Primary Actions */}
+        {/* Global Period Selector, Channel Filter & Primary Actions */}
         <div className="flex flex-wrap items-center gap-2.5">
           {/* Period Filter Buttons */}
           <div className="flex items-center bg-slate-200 dark:bg-slate-900 p-1 rounded-xl border border-slate-300 dark:border-slate-800 text-xs shrink-0">
@@ -1233,6 +1484,24 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             </button>
           </div>
 
+          {/* Channel Filter Dropdown (All, POS, Online Orders, Wholesale) */}
+          <div className="flex items-center bg-slate-200 dark:bg-slate-900 p-1 rounded-xl border border-slate-300 dark:border-slate-800 text-xs shrink-0">
+            <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase px-2 font-mono flex items-center gap-1.5">
+              <Globe className="w-3.5 h-3.5 text-amber-500" />
+              <span>Channel:</span>
+            </span>
+            <select
+              value={channelFilter}
+              onChange={(e) => setChannelFilter(e.target.value as ChannelAuditFilter)}
+              className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-bold text-xs rounded-lg px-2.5 py-1 border border-slate-300 dark:border-slate-700 outline-none cursor-pointer focus:ring-1 focus:ring-amber-500"
+            >
+              <option value="ALL">All Channels (Consolidated)</option>
+              <option value="POS">Retail POS Counter</option>
+              <option value="ONLINE">Online Orders (WhatsApp & Web)</option>
+              <option value="WHOLESALE">Wholesale Commercial</option>
+            </select>
+          </div>
+
           <div className="flex items-center gap-2 shrink-0">
             <Button
               variant="secondary"
@@ -1261,7 +1530,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
               size="sm"
               onClick={handlePrintAllTablesMasterReport}
               className="flex items-center gap-1.5 text-xs font-bold cursor-pointer bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 shadow-sm whitespace-nowrap"
-              title="Prints all 5 database tables together in one consolidated master report / PDF"
+              title="Prints all tables filtered by selected channel & period in one master audit report"
             >
               <Printer className="w-3.5 h-3.5 text-slate-950" />
               <span>Print Master Audit Report</span>
@@ -1286,8 +1555,8 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
         </div>
       )}
 
-      {/* Executive KPI Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+      {/* Executive KPI Summary Cards (Arranged in 2 Rows of 4 Cards) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         {/* Card 1: Net Sales Revenue (Realized Cash) */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-xs">
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
@@ -1295,10 +1564,16 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             <TrendingUp className="w-4 h-4 text-emerald-500" />
           </div>
           <span className="text-lg sm:text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1 block">
-            Rs. {formatRs(totalCombinedRealizedRevenuePaisa)}
+            Rs. {formatRs(displayRealizedRevenuePaisa)}
           </span>
-          <span className="text-[10px] text-slate-500 font-mono mt-0.5 block truncate" title={`Retail: Rs. ${formatRs(totalRetailNetRevenuePaisa)} • Wholesale Realized: Rs. ${formatRs(totalWholesalePaidPaisa)}`}>
-            Retail: Rs. {formatRs(totalRetailNetRevenuePaisa)} | W.Sale: Rs. {formatRs(totalWholesalePaidPaisa)}
+          <span className="text-[10px] text-slate-500 font-mono mt-0.5 block truncate" title={`Retail: Rs. ${formatRs(totalRetailNetRevenuePaisa)} • Wholesale Realized: Rs. ${formatRs(totalWholesalePaidPaisa)} • Online Collected: Rs. ${formatRs(totalOnlineCollectedPaisa)}`}>
+            {channelFilter === "POS"
+              ? "Retail Counter Realized"
+              : channelFilter === "ONLINE"
+              ? "Online Collected (Advances)"
+              : channelFilter === "WHOLESALE"
+              ? "Wholesale Realized Cash"
+              : `Retail: Rs. ${formatRs(totalRetailNetRevenuePaisa)} | W.Sale: Rs. ${formatRs(totalWholesalePaidPaisa)} | Onl: Rs. ${formatRs(totalOnlineCollectedPaisa)}`}
           </span>
         </div>
 
@@ -1309,42 +1584,60 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             <Clock className="w-4 h-4 text-amber-600 dark:text-amber-400" />
           </div>
           <span className="text-lg sm:text-xl font-bold font-mono text-amber-600 dark:text-amber-400 mt-1 block">
-            Rs. {formatRs(totalPendingUdarToDisplay)}
+            Rs. {formatRs(channelFilter === "POS" || channelFilter === "ONLINE" ? 0 : totalPendingUdarToDisplay)}
           </span>
           <span className="text-[10px] text-amber-700/80 dark:text-amber-400/80 font-mono mt-0.5 block truncate">
-            {filteredWholesaleInvoices.filter(w => w.balance_due_paisa > 0).length} Unsettled Invoices (Receivable)
+            {channelFilter === "POS" || channelFilter === "ONLINE"
+              ? "Not applicable for this channel"
+              : `${filteredWholesaleInvoices.filter(w => w.balance_due_paisa > 0).length} Unsettled Invoices (Receivable)`}
           </span>
         </div>
 
-        {/* Card 3: Discounts Given */}
+        {/* Card 3: Online Orders Pending (COD Receivables) */}
+        <div className="bg-blue-500/5 dark:bg-blue-950/20 border border-blue-500/30 p-3.5 rounded-xl shadow-xs">
+          <div className="flex items-center justify-between text-xs text-blue-700 dark:text-blue-400 uppercase font-mono font-bold">
+            <span>Online Orders Pending (COD)</span>
+            <Globe className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+          </div>
+          <span className="text-lg sm:text-xl font-bold font-mono text-blue-600 dark:text-blue-400 mt-1 block">
+            Rs. {formatRs(channelFilter === "POS" || channelFilter === "WHOLESALE" ? 0 : totalOnlinePendingCodPaisa)}
+          </span>
+          <span className="text-[10px] text-blue-700/80 dark:text-blue-400/80 font-mono mt-0.5 block truncate">
+            {channelFilter === "POS" || channelFilter === "WHOLESALE"
+              ? "Not applicable for this channel"
+              : `${filteredOnlineOrders.filter(o => o.cod_balance_paisa > 0 && o.payment_status !== "RETURNED").length} Pending Shipments / Courier COD`}
+          </span>
+        </div>
+
+        {/* Card 4: Discounts Given */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-xs">
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
             <span>Discounts Given</span>
             <Percent className="w-4 h-4 text-rose-500" />
           </div>
           <span className="text-lg sm:text-xl font-bold font-mono text-rose-600 dark:text-rose-400 mt-1 block">
-            Rs. {formatRs(totalRetailDiscountsPaisa)}
+            Rs. {formatRs(displayDiscountsPaisa)}
           </span>
           <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">
-            {totalRetailDiscountedInvoicesCount} Discounted Invoices
+            {displayDiscountedCount} Discounted transactions
           </span>
         </div>
 
-        {/* Card 4: Bottles Sold */}
+        {/* Card 5: Bottles / Units Sold */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-xs">
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
             <span>Bottles Sold</span>
             <Package className="w-4 h-4 text-purple-500" />
           </div>
           <span className="text-lg sm:text-xl font-bold font-mono text-purple-600 dark:text-purple-400 mt-1 block">
-            {totalRetailBottlesSold} Units
+            {displayUnitsSold} Units
           </span>
           <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">
-            Perfume bottles dispensed
+            Fragrance units dispensed
           </span>
         </div>
 
-        {/* Card 5: Petty Expenses */}
+        {/* Card 6: Petty Expenses */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-xs">
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
             <span>Petty Expenses</span>
@@ -1358,7 +1651,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </span>
         </div>
 
-        {/* Card 6: Staff Salaries Paid */}
+        {/* Card 7: Staff Salaries Paid */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-xs">
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
             <span>Staff Salaries Paid</span>
@@ -1372,7 +1665,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </span>
         </div>
 
-        {/* Card 7: Net Operating Margin */}
+        {/* Card 8: Net Operating Margin */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-xs">
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
             <span>Net Operating Margin</span>
@@ -1388,7 +1681,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             Rs. {formatRs(netEstimatedMarginPaisa)}
           </span>
           <span className="text-[10px] text-slate-500 font-mono mt-0.5 block truncate" title="Cash Realized Basis (Excludes Pending Credit / Udar)">
-            Cash Basis (Excl. Udar)
+            Cash Basis (Excl. Pending Receivables)
           </span>
         </div>
       </div>
@@ -1405,7 +1698,19 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             }`}
           >
             <Receipt className="w-4 h-4" />
-            <span>Sales & Revenue Audit ({filteredSales.length})</span>
+            <span>Retail POS Audit ({filteredSales.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("ONLINE")}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-all ${
+              activeTab === "ONLINE"
+                ? "bg-amber-500 text-slate-950 font-bold shadow-xs"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-950 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-900"
+            }`}
+          >
+            <Globe className="w-4 h-4 text-emerald-500" />
+            <span>Online Orders Audit ({filteredOnlineOrders.length})</span>
           </button>
 
           <button
@@ -1474,6 +1779,34 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             >
               <FileSpreadsheet className="w-3.5 h-3.5" />
               <span>Export Sales (Excel)</span>
+            </Button>
+          )}
+
+          {activeTab === "ONLINE" && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const header = "Order #,Channel,Customer,Phone,City,Courier,Tracking #,Total (PKR),Advance (PKR),COD Balance (PKR),Payment Status,Delivery Status,Date\n";
+                const rows = filteredOnlineOrders.map(o => 
+                  `"${o.order_number}","${o.channel}","${o.customer_name}","${o.customer_phone}","${o.city}","${o.courier_partner}","${o.tracking_number || ''}",${o.total_amount_paisa/100},${o.advance_paid_paisa/100},${o.cod_balance_paisa/100},"${o.payment_status}","${o.delivery_status}","${o.created_at}"`
+                ).join("\n");
+                const blob = new Blob([header + rows], { type: "text/csv;charset=utf-8;" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `Ameer_Online_Orders_${period}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+                setFeedback({
+                  type: "success",
+                  text: `✓ Online Orders (${filteredOnlineOrders.length} records) exported to Excel successfully!`,
+                });
+              }}
+              className="flex items-center gap-1.5 text-xs font-semibold cursor-pointer border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 shadow-xs whitespace-nowrap px-3 py-1.5"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Export Online (Excel)</span>
             </Button>
           )}
 
@@ -1662,6 +1995,115 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
                   <tr>
                     <td colSpan={9} className="py-12 text-center text-slate-500">
                       No sales records found for the selected period ({period}).
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: ONLINE ORDERS AUDIT */}
+      {activeTab === "ONLINE" && (
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="w-full sm:w-96">
+              <Input
+                placeholder="Search online order #, customer, phone, courier..."
+                value={onlineSearch}
+                onChange={(e) => setOnlineSearch(e.target.value)}
+                icon={<Search className="w-4 h-4 text-emerald-500" />}
+                className="h-9 text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="text-xs font-mono text-slate-500">
+                Showing {filteredOnlineOrders.length} of {onlineOrders.length} online orders
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-100 dark:bg-slate-800/60 text-slate-500 uppercase font-mono text-[11px] border-b border-slate-200 dark:border-slate-800">
+                <tr>
+                  <th className="py-2.5 px-3">Order #</th>
+                  <th className="py-2.5 px-3">Channel</th>
+                  <th className="py-2.5 px-3">Date</th>
+                  <th className="py-2.5 px-3">Customer & Phone</th>
+                  <th className="py-2.5 px-3">City / Address</th>
+                  <th className="py-2.5 px-3">Courier & Tracking</th>
+                  <th className="py-2.5 px-3 text-right">Order Value</th>
+                  <th className="py-2.5 px-3 text-right">Advance Paid</th>
+                  <th className="py-2.5 px-3 text-right">Pending COD</th>
+                  <th className="py-2.5 px-3 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-sans">
+                {filteredOnlineOrders.map((ord) => (
+                  <tr key={ord.order_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                    <td className="py-2 px-3 font-mono font-bold text-blue-600 dark:text-blue-400 whitespace-nowrap">
+                      {ord.order_number}
+                    </td>
+                    <td className="py-2 px-3 whitespace-nowrap">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        ord.channel === "WHATSAPP"
+                          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30"
+                          : "bg-blue-500/15 text-blue-700 dark:text-blue-400 border border-blue-500/30"
+                      }`}>
+                        {ord.channel === "WHATSAPP" ? "💬 WhatsApp" : "🌐 Website"}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3 text-slate-600 dark:text-slate-400 font-mono text-[11px] whitespace-nowrap">
+                      {new Date(ord.created_at).toLocaleString()}
+                    </td>
+                    <td className="py-2 px-3">
+                      <div className="font-semibold text-slate-900 dark:text-slate-100">{ord.customer_name}</div>
+                      <div className="text-[11px] font-mono text-slate-500">{ord.customer_phone}</div>
+                    </td>
+                    <td className="py-2 px-3 text-slate-700 dark:text-slate-300 max-w-[200px] truncate" title={`${ord.city} • ${ord.shipping_address}`}>
+                      <span className="font-semibold">{ord.city}</span>
+                      <span className="text-[11px] text-slate-500 block truncate">{ord.shipping_address}</span>
+                    </td>
+                    <td className="py-2 px-3 font-mono text-[11px]">
+                      <div>{ord.courier_partner}</div>
+                      {ord.tracking_number && (
+                        <div className="text-amber-600 font-semibold">{ord.tracking_number}</div>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono font-bold text-slate-900 dark:text-slate-100">
+                      Rs. {formatRs(ord.total_amount_paisa)}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+                      Rs. {formatRs(ord.advance_paid_paisa)}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono font-bold text-amber-600 dark:text-amber-400">
+                      {ord.cod_balance_paisa > 0 && ord.payment_status !== "RETURNED" ? (
+                        <span>Rs. {formatRs(ord.cod_balance_paisa)}</span>
+                      ) : (
+                        <span className="text-slate-400 font-normal">Rs. 0</span>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 text-center whitespace-nowrap">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        ord.payment_status === "PAID"
+                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+                          : ord.payment_status === "PARTIAL"
+                          ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                          : ord.payment_status === "RETURNED"
+                          ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30"
+                          : "bg-slate-500/15 text-slate-600 dark:text-slate-400 border border-slate-500/30"
+                      }`}>
+                        {ord.payment_status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {filteredOnlineOrders.length === 0 && (
+                  <tr>
+                    <td colSpan={10} className="py-12 text-center text-slate-500">
+                      No online orders found for the selected period ({period}).
                     </td>
                   </tr>
                 )}

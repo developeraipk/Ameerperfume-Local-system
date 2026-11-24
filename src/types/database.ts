@@ -1064,6 +1064,9 @@ export interface ExecutiveDashboard {
   today_perfume_refunds_paisa?: number;
   today_attar_refunds_paisa?: number;
   today_tester_refunds_paisa?: number;
+  total_online_pending_paisa?: number;
+  online_pending_orders_count?: number;
+  total_online_collected_paisa?: number;
   today_perfume_discount_paisa?: number;
   today_perfume_discount_units?: number;
   today_attar_discount_paisa?: number;

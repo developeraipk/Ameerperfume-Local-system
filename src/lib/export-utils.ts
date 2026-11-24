@@ -4,7 +4,15 @@
  * Includes luxury animated toast notifications upon file generation and download.
  */
 
-import { RecentSaleSummary, FinishedProduct, PettyExpense, EmployeeSalaryPayout, AttarProduct } from "@/types/database";
+import {
+  RecentSaleSummary,
+  FinishedProduct,
+  PettyExpense,
+  EmployeeSalaryPayout,
+  AttarProduct,
+  WholesaleInvoiceSummary,
+  OnlineOrder,
+} from "@/types/database";
 
 export function showExcelExportNotification(
   fileName: string,
@@ -316,7 +324,9 @@ export function exportAllTablesToSingleCSV(
   expenses: PettyExpense[],
   salaries: EmployeeSalaryPayout[],
   period: string = "All Time",
-  filenamePrefix: string = "Ameer_Perfumes_Master_Consolidated_Audit"
+  filenamePrefix: string = "Ameer_Perfumes_Master_Consolidated_Audit",
+  wholesaleInvoices: WholesaleInvoiceSummary[] = [],
+  onlineOrders: OnlineOrder[] = []
 ) {
   const dateStr = new Date().toISOString().slice(0, 10);
   const nowFormatted = new Date().toLocaleString("en-PK", {
@@ -332,8 +342,10 @@ export function exportAllTablesToSingleCSV(
   const totalPerfumeRetailPaisa = products.reduce((acc, p) => acc + (p.retail_price_paisa * p.current_stock_units), 0);
   const totalExpensesPaisa = expenses.reduce((acc, e) => acc + e.amount_paisa, 0);
   const totalSalariesPaisa = salaries.reduce((acc, s) => acc + s.amount_paisa, 0);
-  const netCashflowPaisa = totalSalesPaisa - totalExpensesPaisa - totalSalariesPaisa;
-  const totalCombinedRows = sales.length + products.length + attars.length + expenses.length + salaries.length;
+  const totalOnlinePaisa = onlineOrders.reduce((acc, o) => acc + (o.payment_status !== "RETURNED" ? o.total_amount_paisa : 0), 0);
+  const totalWholesalePaisa = wholesaleInvoices.reduce((acc, w) => acc + w.net_total_paisa, 0);
+  const netCashflowPaisa = totalSalesPaisa + totalOnlinePaisa + totalWholesalePaisa - totalExpensesPaisa - totalSalariesPaisa;
+  const totalCombinedRows = sales.length + products.length + attars.length + expenses.length + salaries.length + wholesaleInvoices.length + onlineOrders.length;
 
   const lines: string[] = [];
 
@@ -506,6 +518,75 @@ export function exportAllTablesToSingleCSV(
     "", "", ""
   ].join(","));
   lines.push("");
+  // SECTION 6: Online Orders & Social Commerce (Optional)
+  if (onlineOrders.length > 0) {
+    lines.push("");
+    lines.push(escapeCsvField(`=== TABLE 6: ONLINE ORDERS & SOCIAL COMMERCE (WHATSAPP & WEB) (${onlineOrders.length} Records) ===`));
+    const onlineHeaders = [
+      "Order #", "Date & Time", "Channel", "Customer Name", "Customer Phone",
+      "City", "Shipping Address", "Items Summary", "Subtotal (PKR)", "Delivery Charges (PKR)",
+      "Discount (PKR)", "Total (PKR)", "Advance Paid (PKR)", "COD Balance (PKR)",
+      "Courier Partner", "Tracking #", "Delivery Status", "Payment Status"
+    ];
+    lines.push(onlineHeaders.map(escapeCsvField).join(","));
+    onlineOrders.forEach((o) => {
+      let itemsSummary = "";
+      try {
+        const parsed = JSON.parse(o.items_json);
+        itemsSummary = parsed.map((it: any) => `${it.name || it.product_name || "Item"} (x${it.quantity || 1})`).join("; ");
+      } catch {
+        itemsSummary = "Assorted Items";
+      }
+
+      lines.push([
+        escapeCsvField(o.order_number),
+        escapeCsvField(new Date(o.created_at).toLocaleString()),
+        escapeCsvField(o.channel),
+        escapeCsvField(o.customer_name),
+        escapeCsvField(o.customer_phone),
+        escapeCsvField(o.city),
+        escapeCsvField(o.shipping_address),
+        escapeCsvField(itemsSummary),
+        escapeCsvField((o.subtotal_paisa / 100).toFixed(2)),
+        escapeCsvField((o.delivery_charges_paisa / 100).toFixed(2)),
+        escapeCsvField(((o.discount_paisa || 0) / 100).toFixed(2)),
+        escapeCsvField((o.total_amount_paisa / 100).toFixed(2)),
+        escapeCsvField((o.advance_paid_paisa / 100).toFixed(2)),
+        escapeCsvField((o.cod_balance_paisa / 100).toFixed(2)),
+        escapeCsvField(o.courier_partner || ""),
+        escapeCsvField(o.tracking_number || ""),
+        escapeCsvField(o.delivery_status),
+        escapeCsvField(o.payment_status)
+      ].join(","));
+    });
+    lines.push("");
+  }
+
+  // SECTION 7: Wholesale Invoices (Optional)
+  if (wholesaleInvoices.length > 0) {
+    lines.push("");
+    lines.push(escapeCsvField(`=== TABLE 7: WHOLESALE COMMERCIAL INVOICES & RECEIVABLES (${wholesaleInvoices.length} Records) ===`));
+    const wholesaleHeaders = [
+      "Invoice #", "Date & Time", "Customer Name", "Channel / Source", "Salesperson",
+      "Net Total (PKR)", "Paid Amount (PKR)", "Balance Due (Udar) (PKR)", "Payment Status"
+    ];
+    lines.push(wholesaleHeaders.map(escapeCsvField).join(","));
+    wholesaleInvoices.forEach((w) => {
+      lines.push([
+        escapeCsvField(w.invoice_number),
+        escapeCsvField(new Date(w.invoice_date).toLocaleString()),
+        escapeCsvField(w.customer_name),
+        escapeCsvField(w.order_source || "DIRECT"),
+        escapeCsvField(w.salesperson_name || ""),
+        escapeCsvField((w.net_total_paisa / 100).toFixed(2)),
+        escapeCsvField((w.paid_amount_paisa / 100).toFixed(2)),
+        escapeCsvField((w.balance_due_paisa / 100).toFixed(2)),
+        escapeCsvField(w.payment_status)
+      ].join(","));
+    });
+    lines.push("");
+  }
+
   lines.push(escapeCsvField("=== END OF MASTER CONSOLIDATED AUDIT SPREADSHEET ==="));
 
   const csvContent = lines.join("\r\n");

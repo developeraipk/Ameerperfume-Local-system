@@ -231,7 +231,7 @@ export const UserSecurityManagement: React.FC<UserSecurityManagementProps> = ({ 
     setIsSaving(true);
     try {
       await updateUserSecurity({
-        caller_user_id: currentUser?.user_id || "usr_admin",
+        caller_user_id: currentUser?.user_id || "usr_ibrar",
         target_user_id: editingUser.user_id,
         new_full_name: editFullName.trim(),
         new_username: editUsername.trim().toLowerCase(),
@@ -279,7 +279,7 @@ export const UserSecurityManagement: React.FC<UserSecurityManagementProps> = ({ 
     setIsSaving(true);
     try {
       await updateUserSecurity({
-        caller_user_id: currentUser?.user_id || "usr_admin",
+        caller_user_id: currentUser?.user_id || "usr_ibrar",
         target_user_id: pinPasswordUser.user_id,
         new_pin: pinPasswordPin.trim() ? pinPasswordPin.trim() : undefined,
         new_password: pinPasswordPwd.trim() ? pinPasswordPwd.trim() : undefined,

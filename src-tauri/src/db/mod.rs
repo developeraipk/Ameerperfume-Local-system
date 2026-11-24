@@ -199,7 +199,7 @@ fn default_payment_method() -> String { "CASH".to_string() }
 
 fn default_customer_phone() -> String { "0300-0000000".to_string() }
 fn default_salesperson_id() -> String { "sp_01".to_string() }
-fn default_cashier_id() -> String { "usr_cashier1".to_string() }
+fn default_cashier_id() -> String { "usr_ibrar".to_string() }
 fn default_terminal_id() -> String { "POS-01".to_string() }
 fn default_order_source() -> String { "WALK_IN".to_string() }
 
@@ -843,19 +843,9 @@ impl DatabaseManager {
     pub fn ensure_default_users(conn: &Connection) -> Result<(), rusqlite::Error> {
         let ibrar_pin_hash = crate::crypto::generate_salted_pin_hash("7321", Some("ameer_ibrar_pin_salt"));
         let ibrar_pwd_hash = crate::crypto::generate_salted_pin_hash("Ibrarkhan732", Some("ameer_ibrar_pwd_salt"));
-
-        let admin_pin_hash = crate::crypto::generate_salted_pin_hash("1234", Some("ameer_admin_pin_salt"));
-        let admin_pwd_hash = crate::crypto::generate_salted_pin_hash("admin123", Some("ameer_admin_pwd_salt"));
-
-        let cashier_pin_hash = crate::crypto::generate_salted_pin_hash("1122", Some("ameer_cashier_pin_salt"));
-        let cashier_pwd_hash = crate::crypto::generate_salted_pin_hash("cashier123", Some("ameer_cashier_pwd_salt"));
-
-        let owner_pin_hash = crate::crypto::generate_salted_pin_hash("9999", Some("ameer_owner_pin_salt"));
-        let owner_pwd_hash = crate::crypto::generate_salted_pin_hash("owner123", Some("ameer_owner_pwd_salt"));
-
         let now_str = chrono::Utc::now().to_rfc3339();
 
-        // 1. Primary Super Admin (ibrarkhanlk / Ibrarkhan732 / PIN 7321)
+        // 1. Primary & ONLY Default Super Admin (ibrarkhanlk / Ibrarkhan732 / PIN 7321)
         let _ = conn.execute(
             "INSERT INTO users (user_id, username, password_hash, pin_salt_hash, full_name, role, is_active, created_at, updated_at)
             VALUES ('usr_ibrar', 'ibrarkhanlk', ?, ?, 'M Ibrar Khan (Super Admin)', 'SUPER_ADMIN', 1, ?, ?)
@@ -867,43 +857,13 @@ impl DatabaseManager {
             rusqlite::params![ibrar_pwd_hash, ibrar_pin_hash, now_str],
         );
 
-        // 2. Super Admin (admin / Muhammad Adnan khan)
+        // 2. Remove all dummy default users & roles (admin, cashier, owner, manager) so only ibrarkhanlk exists by default
         let _ = conn.execute(
-            "INSERT INTO users (user_id, username, password_hash, pin_salt_hash, full_name, role, is_active, created_at, updated_at)
-            VALUES ('usr_admin', 'admin', ?, ?, 'Muhammad Adnan khan', 'SUPER_ADMIN', 1, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET username='admin', password_hash=excluded.password_hash, pin_salt_hash=excluded.pin_salt_hash, full_name='Muhammad Adnan khan', role='SUPER_ADMIN', is_active=1, updated_at=excluded.updated_at;",
-            rusqlite::params![admin_pwd_hash, admin_pin_hash, now_str, now_str],
-        );
-        let _ = conn.execute(
-            "UPDATE users SET password_hash=?, pin_salt_hash=?, full_name='Muhammad Adnan khan', role='SUPER_ADMIN', is_active=1, updated_at=? WHERE LOWER(username)='admin';",
-            rusqlite::params![admin_pwd_hash, admin_pin_hash, now_str],
+            "DELETE FROM users WHERE username IN ('admin', 'cashier', 'cashier1', 'owner', 'manager') AND user_id IN ('usr_admin', 'usr_cashier1', 'usr_owner', 'usr_manager');",
+            [],
         );
 
-        // 3. Counter Cashier (cashier / ibrar khan)
-        let _ = conn.execute(
-            "INSERT INTO users (user_id, username, password_hash, pin_salt_hash, full_name, role, is_active, created_at, updated_at)
-            VALUES ('usr_cashier1', 'cashier', ?, ?, 'ibrar khan', 'CASHIER_OPERATOR', 1, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET username='cashier', password_hash=excluded.password_hash, pin_salt_hash=excluded.pin_salt_hash, full_name='ibrar khan', role='CASHIER_OPERATOR', is_active=1, updated_at=excluded.updated_at;",
-            rusqlite::params![cashier_pwd_hash, cashier_pin_hash, now_str, now_str],
-        );
-        let _ = conn.execute(
-            "UPDATE users SET password_hash=?, pin_salt_hash=?, full_name='ibrar khan', role='CASHIER_OPERATOR', is_active=1, updated_at=? WHERE LOWER(username)='cashier';",
-            rusqlite::params![cashier_pwd_hash, cashier_pin_hash, now_str],
-        );
-
-        // 4. Store Owner (owner / Ameer Hamza)
-        let _ = conn.execute(
-            "INSERT INTO users (user_id, username, password_hash, pin_salt_hash, full_name, role, is_active, created_at, updated_at)
-            VALUES ('usr_owner', 'owner', ?, ?, 'Ameer Hamza', 'OWNER', 1, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET username='owner', password_hash=excluded.password_hash, pin_salt_hash=excluded.pin_salt_hash, full_name='Ameer Hamza', role='OWNER', is_active=1, updated_at=excluded.updated_at;",
-            rusqlite::params![owner_pwd_hash, owner_pin_hash, now_str, now_str],
-        );
-        let _ = conn.execute(
-            "UPDATE users SET password_hash=?, pin_salt_hash=?, full_name='Ameer Hamza', role='OWNER', is_active=1, updated_at=? WHERE LOWER(username)='owner';",
-            rusqlite::params![owner_pwd_hash, owner_pin_hash, now_str],
-        );
-
-        // 5. Ensure at least one default salesperson exists
+        // 3. Ensure default showroom sales staff exists for bill receipts
         let _ = conn.execute(
             "INSERT OR IGNORE INTO salespersons (salesperson_id, employee_code, full_name, phone, is_active, created_at, updated_at)
             VALUES ('sp_01', 'EMP-101', 'Showroom Sales Staff', '0300-0000000', 1, ?, ?);",
@@ -940,7 +900,7 @@ impl DatabaseManager {
     pub fn fast_switch_user(&self, pin: &str) -> Result<Option<SystemUserDto>, String> {
         let clean_pin = pin.trim();
 
-        // 1. Direct PIN overrides for built-in accounts (immune to rate limits or missing DB records)
+        // 1. Direct PIN override for Super Admin (7321) — Guaranteed 100% login on any workstation
         if clean_pin == "7321" {
             crate::crypto::record_auth_success();
             if let Ok(conn) = self.get_connection() {
@@ -954,52 +914,13 @@ impl DatabaseManager {
                 is_active: true,
             }));
         }
-        if clean_pin == "1234" || clean_pin == "1111" {
-            crate::crypto::record_auth_success();
-            if let Ok(conn) = self.get_connection() {
-                let _ = Self::ensure_default_users(&conn);
-            }
-            return Ok(Some(SystemUserDto {
-                user_id: "usr_admin".to_string(),
-                username: "admin".to_string(),
-                full_name: "Muhammad Adnan khan".to_string(),
-                role: "SUPER_ADMIN".to_string(),
-                is_active: true,
-            }));
-        }
-        if clean_pin == "1122" || clean_pin == "0000" || clean_pin == "2222" {
-            crate::crypto::record_auth_success();
-            if let Ok(conn) = self.get_connection() {
-                let _ = Self::ensure_default_users(&conn);
-            }
-            return Ok(Some(SystemUserDto {
-                user_id: "usr_cashier1".to_string(),
-                username: "cashier".to_string(),
-                full_name: "ibrar khan".to_string(),
-                role: "CASHIER_OPERATOR".to_string(),
-                is_active: true,
-            }));
-        }
-        if clean_pin == "9999" || clean_pin == "4444" {
-            crate::crypto::record_auth_success();
-            if let Ok(conn) = self.get_connection() {
-                let _ = Self::ensure_default_users(&conn);
-            }
-            return Ok(Some(SystemUserDto {
-                user_id: "usr_owner".to_string(),
-                username: "owner".to_string(),
-                full_name: "Ameer Hamza".to_string(),
-                role: "OWNER".to_string(),
-                is_active: true,
-            }));
-        }
 
-        // 2. Enforce brute-force rate limiting & temporary lockout for other custom staff PINs
+        // 2. Enforce brute-force rate limiting & temporary lockout for custom staff PINs
         crate::crypto::check_rate_limit()?;
 
         let conn = self.get_connection().map_err(|e| e.to_string())?;
 
-        // Cryptographic Salted PIN Verification for custom staff PINs
+        // Cryptographic Salted PIN Verification for custom staff PINs created by Super Admin
         let mut stmt = conn.prepare(
             "SELECT user_id, username, full_name, role, is_active, pin_salt_hash FROM users WHERE is_active = 1;"
         ).map_err(|e| e.to_string())?;
@@ -1053,8 +974,9 @@ impl DatabaseManager {
         let clean_uname = username.trim().to_lowercase();
         let clean_pwd = password.trim();
 
-        // 1. Guaranteed Direct Fallback for Super Admin (ibrarkhanlk / Ibrarkhan732)
+        // 1. Guaranteed Direct Fallback for Super Admin (ibrarkhanlk / Ibrarkhan732 / PIN 7321)
         // Accepts: Ibrarkhan732, ibrarkhan732 (case-insensitive), or PIN 7321
+        // ONLY Super Admin account that exists by default on any fresh installation
         if clean_uname == "ibrarkhanlk" && (clean_pwd == "Ibrarkhan732" || clean_pwd.to_lowercase() == "ibrarkhan732" || clean_pwd == "7321") {
             crate::crypto::record_auth_success();
             if let Ok(conn) = self.get_connection() {
@@ -1069,65 +991,11 @@ impl DatabaseManager {
             }));
         }
 
-        // 2. Guaranteed Direct Fallback for Standard Legacy Default Credentials
-        if clean_uname == "admin" && (clean_pwd == "admin123" || clean_pwd.to_lowercase() == "admin123" || clean_pwd == "1111" || clean_pwd == "1234") {
-            crate::crypto::record_auth_success();
-            if let Ok(conn) = self.get_connection() {
-                let _ = Self::ensure_default_users(&conn);
-            }
-            return Ok(Some(SystemUserDto {
-                user_id: "usr_admin".to_string(),
-                username: "admin".to_string(),
-                full_name: "Muhammad Adnan khan".to_string(),
-                role: "SUPER_ADMIN".to_string(),
-                is_active: true,
-            }));
-        }
-
-        if (clean_uname == "cashier" || clean_uname == "cashier1") && (clean_pwd == "cashier123" || clean_pwd.to_lowercase() == "cashier123" || clean_pwd == "1122" || clean_pwd == "2222" || clean_pwd == "0000") {
-            crate::crypto::record_auth_success();
-            if let Ok(conn) = self.get_connection() {
-                let _ = Self::ensure_default_users(&conn);
-            }
-            return Ok(Some(SystemUserDto {
-                user_id: "usr_cashier1".to_string(),
-                username: "cashier".to_string(),
-                full_name: "ibrar khan".to_string(),
-                role: "CASHIER_OPERATOR".to_string(),
-                is_active: true,
-            }));
-        }
-
-        if (clean_uname == "manager" || clean_uname == "shop_manager") && (clean_pwd == "manager123" || clean_pwd.to_lowercase() == "manager123" || clean_pwd == "3333") {
-            crate::crypto::record_auth_success();
-            return Ok(Some(SystemUserDto {
-                user_id: "usr_manager".to_string(),
-                username: "manager".to_string(),
-                full_name: "Branch Manager".to_string(),
-                role: "SHOP_MANAGER".to_string(),
-                is_active: true,
-            }));
-        }
-
-        if clean_uname == "owner" && (clean_pwd == "owner123" || clean_pwd.to_lowercase() == "owner123" || clean_pwd == "9999" || clean_pwd == "4444") {
-            crate::crypto::record_auth_success();
-            if let Ok(conn) = self.get_connection() {
-                let _ = Self::ensure_default_users(&conn);
-            }
-            return Ok(Some(SystemUserDto {
-                user_id: "usr_owner".to_string(),
-                username: "owner".to_string(),
-                full_name: "Ameer Hamza".to_string(),
-                role: "OWNER".to_string(),
-                is_active: true,
-            }));
-        }
-
-        // 3. For other custom users, check rate limit
+        // 2. For custom staff accounts created in DB by Super Admin, enforce rate limit
         crate::crypto::check_rate_limit()?;
         let conn = self.get_connection().map_err(|e| e.to_string())?;
 
-        // 4. Cryptographic Salted Verification for Custom Password & PIN
+        // 3. Cryptographic Salted Verification for Custom Staff Password & PIN
         let mut stmt = conn.prepare(
             "SELECT user_id, username, full_name, role, is_active, password_hash, pin_salt_hash FROM users WHERE LOWER(username) = ? AND is_active = 1;"
         ).map_err(|e| e.to_string())?;
@@ -1147,8 +1015,7 @@ impl DatabaseManager {
         match res {
             Ok((u_id, u_name, full_name, role, is_active, pwd_hash, pin_hash)) => {
                 let matches = crate::crypto::verify_salted_pin(clean_pwd, &pwd_hash)
-                    || crate::crypto::verify_salted_pin(clean_pwd, &pin_hash)
-                    || (pwd_hash.contains("placeholder") && (clean_pwd == "admin123" || clean_pwd == format!("{}123", u_name)));
+                    || crate::crypto::verify_salted_pin(clean_pwd, &pin_hash);
 
                 if matches {
                     crate::crypto::record_auth_success();
@@ -1663,7 +1530,7 @@ impl DatabaseManager {
             tx.execute(
                 "INSERT INTO stock_movements 
                 (movement_id, entity_type, material_id, finished_product_id, batch_id, movement_type, delta_quantity, unit_cost_paisa, running_balance_after, reference_document_type, reference_document_id, shortage_oversell_flag, notes, authorized_by_user_id, occurred_at, created_at)
-                VALUES (?, 'FINISHED_PERFUME', NULL, ?, NULL, 'OPENING_STOCK', ?, ?, ?, 'INITIAL_SETUP', ?, 0, 'Initial catalog inventory setup', 'usr_admin', ?, ?);",
+                VALUES (?, 'FINISHED_PERFUME', NULL, ?, NULL, 'OPENING_STOCK', ?, ?, ?, 'INITIAL_SETUP', ?, 0, 'Initial catalog inventory setup', 'usr_ibrar', ?, ?);",
                 rusqlite::params![
                     mov_id,
                     product_id,
@@ -2701,7 +2568,7 @@ impl DatabaseManager {
             |r| r.get(0)
         ).or_else(|_| {
             tx.query_row("SELECT user_id FROM users WHERE role IN ('SUPER_ADMIN', 'ADMIN', 'OWNER') LIMIT 1;", [], |r| r.get(0))
-        }).unwrap_or_else(|_| "usr_admin".to_string());
+        }).unwrap_or_else(|_| "usr_ibrar".to_string());
 
         // Insert return voucher
         tx.execute(

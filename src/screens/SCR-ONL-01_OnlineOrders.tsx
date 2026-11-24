@@ -1997,7 +1997,6 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                   <option value="CASH">💵 Cash (Disbursed by Courier / Received in Hand)</option>
                   <option value="EASYPAISA">📱 EasyPaisa</option>
                   <option value="JAZZCASH">📱 JazzCash</option>
-                  <option value="BANK_TRANSFER">🏦 Bank Transfer</option>
                 </select>
               </div>
 

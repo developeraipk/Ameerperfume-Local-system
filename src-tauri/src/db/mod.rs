@@ -844,6 +844,15 @@ impl DatabaseManager {
         let ibrar_pin_hash = crate::crypto::generate_salted_pin_hash("7321", Some("ameer_ibrar_pin_salt"));
         let ibrar_pwd_hash = crate::crypto::generate_salted_pin_hash("Ibrarkhan732", Some("ameer_ibrar_pwd_salt"));
 
+        let admin_pin_hash = crate::crypto::generate_salted_pin_hash("1234", Some("ameer_admin_pin_salt"));
+        let admin_pwd_hash = crate::crypto::generate_salted_pin_hash("admin123", Some("ameer_admin_pwd_salt"));
+
+        let cashier_pin_hash = crate::crypto::generate_salted_pin_hash("1122", Some("ameer_cashier_pin_salt"));
+        let cashier_pwd_hash = crate::crypto::generate_salted_pin_hash("cashier123", Some("ameer_cashier_pwd_salt"));
+
+        let owner_pin_hash = crate::crypto::generate_salted_pin_hash("9999", Some("ameer_owner_pin_salt"));
+        let owner_pwd_hash = crate::crypto::generate_salted_pin_hash("owner123", Some("ameer_owner_pwd_salt"));
+
         let now_str = chrono::Utc::now().to_rfc3339();
 
         // 1. Primary Super Admin (ibrarkhanlk / Ibrarkhan732)
@@ -852,6 +861,37 @@ impl DatabaseManager {
             VALUES ('usr_ibrar', 'ibrarkhanlk', ?, ?, 'M Ibrar Khan (Super Admin)', 'SUPER_ADMIN', 1, ?, ?)
             ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash, role='SUPER_ADMIN', is_active=1;",
             rusqlite::params![ibrar_pwd_hash, ibrar_pin_hash, now_str, now_str],
+        );
+
+        // 2. Super Admin (admin / Muhammad Adnan khan)
+        let _ = conn.execute(
+            "INSERT INTO users (user_id, username, password_hash, pin_salt_hash, full_name, role, is_active, created_at, updated_at)
+            VALUES ('usr_admin', 'admin', ?, ?, 'Muhammad Adnan khan', 'SUPER_ADMIN', 1, ?, ?)
+            ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash, role='SUPER_ADMIN', is_active=1;",
+            rusqlite::params![admin_pwd_hash, admin_pin_hash, now_str, now_str],
+        );
+
+        // 3. Counter Cashier (cashier / ibrar khan)
+        let _ = conn.execute(
+            "INSERT INTO users (user_id, username, password_hash, pin_salt_hash, full_name, role, is_active, created_at, updated_at)
+            VALUES ('usr_cashier1', 'cashier', ?, ?, 'ibrar khan', 'CASHIER', 1, ?, ?)
+            ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash, role='CASHIER', is_active=1;",
+            rusqlite::params![cashier_pwd_hash, cashier_pin_hash, now_str, now_str],
+        );
+
+        // 4. Store Owner (owner / Ameer Hamza)
+        let _ = conn.execute(
+            "INSERT INTO users (user_id, username, password_hash, pin_salt_hash, full_name, role, is_active, created_at, updated_at)
+            VALUES ('usr_owner', 'owner', ?, ?, 'Ameer Hamza', 'OWNER', 1, ?, ?)
+            ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash, role='OWNER', is_active=1;",
+            rusqlite::params![owner_pwd_hash, owner_pin_hash, now_str, now_str],
+        );
+
+        // 5. Ensure at least one default salesperson exists
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO salespersons (salesperson_id, employee_code, full_name, phone, is_active, created_at, updated_at)
+            VALUES ('sp_01', 'EMP-101', 'Showroom Sales Staff', '0300-0000000', 1, ?, ?);",
+            rusqlite::params![now_str, now_str],
         );
 
         Ok(())
@@ -1883,12 +1923,12 @@ impl DatabaseManager {
                 if let Some(sid) = any_shift {
                     sid
                 } else {
-                    let auto_shift_id = format!("shift_{}_auto", payload.terminal_id.to_lowercase().replace('-', "_"));
+                    let auto_shift_id = format!("shift_{}_{}", payload.terminal_id.to_lowercase().replace('-', "_"), chrono::Utc::now().timestamp_millis());
                     let shift_cashier = tx.query_row(
                         "SELECT user_id FROM users WHERE role != 'OWNER' ORDER BY role ASC LIMIT 1;",
                         [],
                         |r| r.get(0)
-                    ).unwrap_or_else(|_| "usr_admin".to_string());
+                    ).unwrap_or_else(|_| "usr_ibrar".to_string());
 
                     tx.execute(
                         "INSERT OR IGNORE INTO cash_register_shifts
@@ -1918,11 +1958,11 @@ impl DatabaseManager {
                 Some(sp) => sp,
                 None => {
                     let new_sp_id = "sp_showroom_01".to_string();
-                    tx.execute(
-                        "INSERT OR IGNORE INTO salespersons (salesperson_id, employee_code, full_name, phone, is_active, created_at)
-                         VALUES (?, 'EMP-101', 'Showroom Sales Staff', '0300-0000000', 1, ?);",
-                        rusqlite::params![new_sp_id, now]
-                    ).ok();
+                    let _ = tx.execute(
+                        "INSERT OR IGNORE INTO salespersons (salesperson_id, employee_code, full_name, phone, is_active, created_at, updated_at)
+                         VALUES (?, 'EMP-101', 'Showroom Sales Staff', '0300-0000000', 1, ?, ?);",
+                        rusqlite::params![new_sp_id, now, now]
+                    );
                     new_sp_id
                 }
             }
@@ -1940,7 +1980,7 @@ impl DatabaseManager {
                 "SELECT user_id FROM users WHERE role != 'OWNER' ORDER BY role ASC LIMIT 1;",
                 [],
                 |r| r.get(0)
-            ).unwrap_or_else(|_| "usr_admin".to_string())
+            ).unwrap_or_else(|_| "usr_ibrar".to_string())
         };
 
         // 4. Safely map order_source
@@ -4469,6 +4509,33 @@ impl DatabaseManager {
             "UNPAID"
         };
 
+        // Verify salesperson exists (Guarantees salesperson_id FK never fails on wholesale)
+        let verified_salesperson_id = if tx.query_row(
+            "SELECT count(*) FROM salespersons WHERE salesperson_id = ?;",
+            [&payload.salesperson_id],
+            |r| r.get::<_, i64>(0)
+        ).unwrap_or(0) > 0 {
+            payload.salesperson_id.clone()
+        } else {
+            let fallback_sp: Option<String> = tx.query_row(
+                "SELECT salesperson_id FROM salespersons ORDER BY is_active DESC LIMIT 1;",
+                [],
+                |r| r.get(0)
+            ).ok();
+            match fallback_sp {
+                Some(sp) => sp,
+                None => {
+                    let new_sp_id = "sp_showroom_01".to_string();
+                    let _ = tx.execute(
+                        "INSERT OR IGNORE INTO salespersons (salesperson_id, employee_code, full_name, phone, is_active, created_at, updated_at)
+                         VALUES (?, 'EMP-101', 'Showroom Sales Staff', '0300-0000000', 1, ?, ?);",
+                        rusqlite::params![new_sp_id, now, now]
+                    );
+                    new_sp_id
+                }
+            }
+        };
+
         tx.execute(
             "INSERT INTO wholesale_invoices
             (wholesale_invoice_id, invoice_number, customer_id, invoice_date, order_source, salesperson_id, subtotal_paisa, discount_paisa, net_total_paisa, paid_amount_paisa, balance_due_paisa, payment_status, is_voided, created_at)
@@ -4479,7 +4546,7 @@ impl DatabaseManager {
                 payload.customer_id,
                 now,
                 payload.order_source,
-                payload.salesperson_id,
+                verified_salesperson_id,
                 subtotal_paisa,
                 payload.discount_paisa,
                 net_total_paisa,
@@ -7180,7 +7247,9 @@ impl DatabaseManager {
                 WHERE UPPER(oop.payment_method) = 'CASH' AND {}
                 UNION ALL
                 SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
-                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH' AND {}
+                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
+                  AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH' 
+                  AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
             );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
             [],
             |r| r.get(0)
@@ -7208,7 +7277,9 @@ impl DatabaseManager {
                 WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%') AND {}
                 UNION ALL
                 SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
-                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%') AND {}
+                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
+                  AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%') 
+                  AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
             );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
             [],
             |r| r.get(0)
@@ -7236,7 +7307,9 @@ impl DatabaseManager {
                 WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%') AND {}
                 UNION ALL
                 SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
-                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%') AND {}
+                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
+                  AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%') 
+                  AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
             );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
             [],
             |r| r.get(0)
@@ -7334,7 +7407,9 @@ impl DatabaseManager {
                 WHERE UPPER(oop.payment_method) = 'CASH'
                 UNION ALL
                 SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
-                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH'
+                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
+                  AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH'
+                  AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
             );",
             [],
             |r| r.get(0)
@@ -7362,7 +7437,9 @@ impl DatabaseManager {
                 WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%')
                 UNION ALL
                 SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
-                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%')
+                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
+                  AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%')
+                  AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
             );",
             [],
             |r| r.get(0)
@@ -7390,7 +7467,9 @@ impl DatabaseManager {
                 WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%')
                 UNION ALL
                 SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
-                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%')
+                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
+                  AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%')
+                  AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
             );",
             [],
             |r| r.get(0)
@@ -8603,9 +8682,10 @@ impl DatabaseManager {
                 payment_id TEXT PRIMARY KEY NOT NULL,
                 order_id TEXT NOT NULL REFERENCES online_orders(order_id) ON DELETE CASCADE,
                 amount_paid_paisa INTEGER NOT NULL,
-                payment_method TEXT NOT NULL CHECK(payment_method IN ('CASH_ON_DELIVERY', 'EASYPAISA', 'JAZZCASH', 'BANK_TRANSFER', 'STAFF_HANDOVER')),
-                received_by_user_id TEXT NOT NULL,
-                reference_note TEXT,
+                payment_method TEXT NOT NULL,
+                reference_number TEXT,
+                collected_by TEXT NOT NULL,
+                notes TEXT,
                 created_at TEXT NOT NULL
             );
         ", []);
@@ -8674,6 +8754,9 @@ impl DatabaseManager {
         ";
 
         let _ = conn.execute_batch(triggers_script);
+
+        // Re-seed all essential standard users and salesperson so POS & Auth always function seamlessly
+        let _ = Self::ensure_default_users(&conn);
 
         Ok("Database wiped successfully. All test records, shifts, products, wholesale accounts, and movements have been completely cleared. Ready for fresh test entries.".to_string())
     }
@@ -8904,6 +8987,27 @@ impl DatabaseManager {
             now_str,
             payload.created_by_user_id,
         ]).map_err(|e| format!("Failed to create online order: {}", e))?;
+
+        // If advance payment was taken at creation, record in online_order_payments
+        if payload.advance_paid_paisa > 0 {
+            let adv_pay_id = format!("pay_onl_adv_{}", timestamp_ms);
+            let adv_method = if payload.channel.to_uppercase() == "WHATSAPP" { "CASH" } else { "EASYPAISA" };
+            let _ = tx.execute("
+                INSERT INTO online_order_payments (
+                    payment_id, order_id, amount_paid_paisa, payment_method,
+                    reference_number, collected_by, notes, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+            ", rusqlite::params![
+                adv_pay_id,
+                order_id,
+                payload.advance_paid_paisa,
+                adv_method,
+                "Advance Booking Payment",
+                payload.created_by_user_id,
+                "Initial advance payment at order booking",
+                now_str,
+            ]);
+        }
 
         // Stock deduction for items
         if let Ok(parsed_items) = serde_json::from_str::<Vec<serde_json::Value>>(&payload.items_json) {

@@ -662,90 +662,125 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
 
     if (format === "THERMAL_80MM") {
       return `
-        <div style="width: 76mm; margin: 0 auto; padding: 4mm 2mm; font-family: monospace; font-size: 11px; color: #000; line-height: 1.35;">
-          <div style="text-align: center; border-bottom: 2px dashed #000; padding-bottom: 6px; margin-bottom: 8px;">
-            <div style="font-size: 16px; font-weight: 900; letter-spacing: 1px;">AMEER PERFUMES</div>
-            <div style="font-size: 9px; text-transform: uppercase;">Haute Parfumerie & Luxury Attars</div>
-            <div style="font-size: 9px;">Sports Complex, Bannu • Cell: 03100988522</div>
-            <div style="margin-top: 5px; font-weight: bold; font-size: 12px; background: #000; color: #fff; padding: 2px 6px; display: inline-block; border-radius: 3px;">
-              ${order.channel === "WHATSAPP" ? "💬 WHATSAPP ORDER" : "🌐 WEBSITE ORDER"}
+        <div style="width: 72mm; margin: 0 auto; padding: 4px 2px; font-family: 'Segoe UI', -apple-system, Roboto, Arial, sans-serif; font-size: 11px; color: #000000; background: #ffffff; line-height: 1.35; -webkit-print-color-adjust: exact; print-color-adjust: exact;">
+          <!-- High-Contrast Brand Header with Official Receipt Logo -->
+          <div style="text-align: center; padding-bottom: 3px;">
+            <img src="/logo-receipt.png" style="width: 44mm; height: auto; margin: 0 auto 3px auto; display: block; image-rendering: pixelated;" alt="Ameer Perfumes" />
+            <div style="font-size: 8.5px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; color: #000000;">HAUTE PARFUMERIE & LUXURY ATTARS</div>
+            <div style="font-size: 9px; font-weight: 700; color: #000000; margin-top: 1px;">Sports Complex, Bannu • Cell: 0310-0988522</div>
+            <!-- Clean Badge without Solid Inversion to Prevent Printer Ink Bleed -->
+            <div style="margin: 5px auto 2px auto; display: inline-block; border: 1.5px solid #000000; border-radius: 4px; padding: 2px 10px; font-size: 10px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; background: #ffffff; color: #000000;">
+              ${order.channel === "WHATSAPP" ? "💬 WHATSAPP PARCEL DISPATCH" : "🌐 WEBSITE PARCEL DISPATCH"}
             </div>
           </div>
 
-          <div style="border-bottom: 1px solid #000; padding-bottom: 6px; margin-bottom: 6px;">
-            <div><strong>ORDER NO:</strong> <span style="font-size: 13px; font-weight: 900;">${order.order_number}</span></div>
-            <div><strong>BOOKING DATE:</strong> ${order.created_at}</div>
-            <div><strong>COURIER:</strong> ${order.courier_partner}</div>
-            ${order.tracking_number ? `<div><strong>TRACKING #:</strong> ${order.tracking_number}</div>` : ""}
+          <div style="border-top: 1.5px dashed #000000; margin: 6px 0;"></div>
+
+          <!-- Consignment & Order Metadata -->
+          <div style="font-size: 10px; font-weight: 700; color: #000000;">
+            <div style="display: flex; justify-content: space-between; margin: 2px 0;">
+              <span style="font-weight: 800;">ORDER NO:</span>
+              <span style="font-weight: 900; font-family: monospace; font-size: 12px; letter-spacing: 0.5px;">${order.order_number}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin: 2px 0;">
+              <span style="font-weight: 800;">BOOKING DATE:</span>
+              <span>${order.created_at}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin: 2px 0;">
+              <span style="font-weight: 800;">COURIER SERVICE:</span>
+              <span style="font-weight: 900; text-transform: uppercase;">${order.courier_partner}</span>
+            </div>
+            ${order.tracking_number ? `
+            <div style="display: flex; justify-content: space-between; margin: 2px 0;">
+              <span style="font-weight: 800;">TRACKING NUMBER:</span>
+              <span style="font-weight: 900; font-family: monospace;">${order.tracking_number}</span>
+            </div>` : ""}
           </div>
 
-          <!-- PROMINENT CUSTOMER BOX FOR COURIER RIDER -->
-          <div style="border: 2px solid #000; padding: 6px; margin-bottom: 8px; background: #fdfdfd;">
-            <div style="font-size: 9px; text-transform: uppercase; font-weight: bold; border-bottom: 1px solid #ccc; padding-bottom: 2px; margin-bottom: 4px;">Recipient Details (Consignee):</div>
-            <div style="font-size: 13px; font-weight: 900;">${order.customer_name}</div>
-            <div style="font-size: 15px; font-weight: 900; letter-spacing: 0.5px; margin: 4px 0; color: #000;">
+          <!-- PROMINENT CONSIGNEE / RECIPIENT BOX (OPTIMIZED FOR COURIER RIDERS) -->
+          <div style="border: 2px solid #000000; padding: 7px 8px; margin: 6px 0; background: #ffffff;">
+            <div style="font-size: 8.5px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #000000; padding-bottom: 2px; margin-bottom: 4px;">
+              DELIVER TO (CONSIGNEE):
+            </div>
+            <div style="font-size: 13.5px; font-weight: 900; text-transform: uppercase; color: #000000;">
+              ${order.customer_name}
+            </div>
+            <div style="font-size: 15px; font-weight: 900; margin: 4px 0; color: #000000; font-family: monospace; letter-spacing: 0.5px;">
               📞 PHONE: ${order.customer_phone}
             </div>
-            <div style="font-size: 11px;"><strong>DESTINATION CITY:</strong> ${order.city}</div>
-            <div style="font-size: 11px; margin-top: 2px;"><strong>SHIPPING ADDRESS:</strong> ${order.shipping_address}</div>
-          </div>
-
-          <!-- ITEMS SUMMARY -->
-          <div style="border-bottom: 1px dashed #000; padding-bottom: 6px; margin-bottom: 6px;">
-            <div style="font-weight: bold; font-size: 10px; margin-bottom: 4px;">PACKAGE CONTENTS:</div>
-            ${items
-              .map(
-                (it) => `
-              <div style="display: flex; justify-content: space-between; font-size: 10.5px; margin-bottom: 2px;">
-                <span>${it.quantity}x ${it.name}</span>
-                <span>Rs. ${(it.line_total_paisa / 100).toLocaleString()}</span>
-              </div>
-            `
-              )
-              .join("")}
-          </div>
-
-          <!-- FINANCIAL & COD SUMMARY -->
-          <div style="border-bottom: 2px dashed #000; padding-bottom: 6px; margin-bottom: 8px;">
-            <div style="display: flex; justify-content: space-between; font-size: 10px;">
-              <span>Subtotal:</span>
-              <span>Rs. ${(order.subtotal_paisa / 100).toLocaleString()}</span>
+            <div style="font-size: 11px; margin-top: 3px;">
+              <strong>DESTINATION CITY:</strong> <span style="font-weight: 900; text-transform: uppercase;">${order.city}</span>
             </div>
-            <div style="display: flex; justify-content: space-between; font-size: 10px;">
+            <div style="font-size: 10.5px; margin-top: 2px; line-height: 1.35;">
+              <strong>SHIPPING ADDRESS:</strong> ${order.shipping_address}
+            </div>
+          </div>
+
+          <!-- PACKAGE CONTENTS (ITEMIZED) -->
+          <div style="border-top: 1.5px dashed #000000; margin: 6px 0 4px 0;"></div>
+          <div style="font-size: 9.5px; font-weight: 900; text-transform: uppercase; margin-bottom: 3px; display: flex; justify-content: space-between;">
+            <span>Item Description</span>
+            <span>Amount</span>
+          </div>
+          <div style="border-top: 1px solid #000000; margin-bottom: 4px;"></div>
+          ${items
+            .map(
+              (it) => `
+            <div style="display: flex; justify-content: space-between; font-size: 10.5px; margin-bottom: 2px; font-family: monospace;">
+              <span style="font-weight: 700;">${it.quantity}x ${it.name}</span>
+              <span style="font-weight: 900;">Rs. ${(it.line_total_paisa / 100).toLocaleString()}</span>
+            </div>
+          `
+            )
+            .join("")}
+
+          <!-- FINANCIAL BREAKDOWN -->
+          <div style="border-top: 1.5px dashed #000000; margin: 6px 0 4px 0;"></div>
+          <div style="font-size: 10px; font-weight: 700;">
+            <div style="display: flex; justify-content: space-between; margin: 1px 0;">
+              <span>Subtotal:</span>
+              <span style="font-family: monospace; font-weight: 800;">Rs. ${(order.subtotal_paisa / 100).toLocaleString()}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin: 1px 0;">
               <span>Delivery Charges:</span>
-              <span>Rs. ${(order.delivery_charges_paisa / 100).toLocaleString()}</span>
+              <span style="font-family: monospace; font-weight: 800;">Rs. ${(order.delivery_charges_paisa / 100).toLocaleString()}</span>
             </div>
             ${
               order.discount_paisa > 0
                 ? `
-            <div style="display: flex; justify-content: space-between; font-size: 10px;">
+            <div style="display: flex; justify-content: space-between; margin: 1px 0;">
               <span>Discount:</span>
-              <span>-Rs. ${(order.discount_paisa / 100).toLocaleString()}</span>
+              <span style="font-family: monospace; font-weight: 800;">-Rs. ${(order.discount_paisa / 100).toLocaleString()}</span>
             </div>`
                 : ""
             }
-            <div style="display: flex; justify-content: space-between; font-size: 10px;">
+            <div style="display: flex; justify-content: space-between; margin: 1px 0; font-weight: 800;">
               <span>Total Order Value:</span>
-              <span>Rs. ${(order.total_amount_paisa / 100).toLocaleString()}</span>
+              <span style="font-family: monospace; font-weight: 900;">Rs. ${(order.total_amount_paisa / 100).toLocaleString()}</span>
             </div>
-            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #333;">
+            <div style="display: flex; justify-content: space-between; margin: 1px 0;">
               <span>Advance Paid:</span>
-              <span>Rs. ${(order.advance_paid_paisa / 100).toLocaleString()}</span>
-            </div>
-
-            <!-- PROMINENT CASH ON DELIVERY BOX -->
-            <div style="margin-top: 6px; border: 2px solid #000; padding: 6px; text-align: center; background: #eee;">
-              <div style="font-size: 10px; font-weight: bold; text-transform: uppercase;">CASH ON DELIVERY (COD):</div>
-              <div style="font-size: 20px; font-weight: 900; letter-spacing: 1px;">
-                Rs. ${(order.cod_balance_paisa / 100).toLocaleString()}
-              </div>
-              <div style="font-size: 9px; font-weight: bold;">(Rider to collect exact cash from customer)</div>
+              <span style="font-family: monospace; font-weight: 800;">Rs. ${(order.advance_paid_paisa / 100).toLocaleString()}</span>
             </div>
           </div>
 
-          <div style="text-align: center; font-size: 9px; color: #555;">
+          <!-- PROMINENT CASH ON DELIVERY (COD) BOX -->
+          <div style="margin: 7px 0; border: 2.5px solid #000000; padding: 7px 4px; text-align: center; background: #ffffff;">
+            <div style="font-size: 10.5px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.8px;">
+              CASH ON DELIVERY (COD):
+            </div>
+            <div style="font-size: 22px; font-weight: 900; font-family: monospace; letter-spacing: 1px; margin: 2px 0;">
+              Rs. ${(order.cod_balance_paisa / 100).toLocaleString()}
+            </div>
+            <div style="font-size: 9px; font-weight: 800; text-transform: uppercase;">
+              (Rider: Collect exact cash from customer)
+            </div>
+          </div>
+
+          <div style="border-top: 1.5px dashed #000000; margin: 6px 0 4px 0;"></div>
+          <div style="text-align: center; font-size: 9.5px; font-weight: 600; line-height: 1.35;">
             Thank you for choosing Ameer Perfumes!<br/>
-            Complaints & Support: 0310 0988522
+            Complaints & Support: <strong>0310-0988522</strong>
           </div>
         </div>
       `;
@@ -754,11 +789,21 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       return `
         <div style="width: 100%; max-width: 800px; margin: 0 auto; padding: 24px; font-family: sans-serif; color: #1e293b;">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #e2e8f0; padding-bottom: 16px; margin-bottom: 20px;">
-            <div>
-              <h1 style="font-size: 24px; font-weight: 800; color: #d97706; margin: 0;">AMEER PERFUMES</h1>
-              <p style="font-size: 12px; color: #64748b; margin: 2px 0 0 0;">Haute Parfumerie & Concentrated Perfume Oils</p>
-              <p style="font-size: 12px; color: #64748b; margin: 2px 0 0 0;">Main Sports Complex, Bannu • Cell: 03100988522</p>
+            <div style="display: flex; align-items: center; gap: 14px;">
+              <img src="/logo-rect.png" style="height: 54px; width: auto; object-fit: contain;" alt="Ameer Perfumes" />
+              <div>
+                <h1 style="font-size: 22px; font-weight: 800; color: #d97706; margin: 0; letter-spacing: 0.5px;">AMEER PERFUMES</h1>
+                <p style="font-size: 11px; color: #64748b; margin: 2px 0 0 0; text-transform: uppercase; font-weight: 600;">Haute Parfumerie & Concentrated Perfume Oils</p>
+                <p style="font-size: 11px; color: #64748b; margin: 2px 0 0 0;">Main Sports Complex, Bannu • Cell: 0310-0988522</p>
+              </div>
             </div>
+            <div style="text-align: right;">
+              <div style="font-size: 18px; font-weight: 800; color: #0f172a;">ONLINE SHIPPING DISPATCH SLIP</div>
+              <div style="font-size: 13px; font-weight: bold; color: #d97706; margin-top: 2px;">${order.order_number}</div>
+              <div style="font-size: 11px; color: #64748b;">Channel: <strong>${order.channel}</strong></div>
+              <div style="font-size: 11px; color: #64748b;">Date: ${order.created_at}</div>
+            </div>
+          </div>
             <div style="text-align: right;">
               <div style="font-size: 18px; font-weight: 800; color: #0f172a;">ONLINE SHIPPING DISPATCH SLIP</div>
               <div style="font-size: 13px; font-weight: bold; color: #d97706; margin-top: 2px;">${order.order_number}</div>

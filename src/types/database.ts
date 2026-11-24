@@ -1337,12 +1337,13 @@ export interface OnlineOrderItem {
   product_id?: string;
   attar_id?: string;
   name: string;
-  item_type: "PERFUME" | "ATTAR";
+  item_type: "PERFUME" | "ATTAR" | "TESTER" | "OFFER";
   quantity: number;
   size_ml?: number;
   unit_price_paisa: number;
   line_total_paisa: number;
   grams?: number;
+  is_tester?: boolean;
 }
 
 export interface OnlineOrder {
@@ -1415,4 +1416,9 @@ export interface MarkOnlineReturnPayload {
   refund_amount_paisa?: number;
   deduction_amount_paisa?: number;
   refund_settlement_method?: string;
+  returned_items_json?: string;
+  remaining_items_json?: string;
+  new_total_paisa?: number;
+  new_subtotal_paisa?: number;
+  is_partial?: boolean;
 }

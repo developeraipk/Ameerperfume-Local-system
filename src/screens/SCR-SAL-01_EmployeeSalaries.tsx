@@ -44,7 +44,6 @@ export const EmployeeSalaries: React.FC<EmployeeSalariesProps> = ({ currentUser 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedStaffId, setSelectedStaffId] = useState("");
   const [payoutType, setPayoutType] = useState<"DAILY_WAGE" | "WEEKLY_PAYOUT" | "MONTHLY_SALARY" | "ADVANCE_PAYMENT" | "COMMISSION">("DAILY_WAGE");
-  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "EASYPAISA" | "JAZZCASH">("CASH");
   const [amountRupees, setAmountRupees] = useState("");
   const [payoutDate, setPayoutDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
@@ -70,7 +69,8 @@ export const EmployeeSalaries: React.FC<EmployeeSalariesProps> = ({ currentUser 
     cash: number;
     easypaisa: number;
     jazzcash: number;
-  }>({ cash: 0, easypaisa: 0, jazzcash: 0 });
+    netAvailable: number;
+  }>({ cash: 0, easypaisa: 0, jazzcash: 0, netAvailable: 0 });
 
   const loadData = async () => {
     setIsLoading(true);
@@ -89,6 +89,11 @@ export const EmployeeSalaries: React.FC<EmployeeSalariesProps> = ({ currentUser 
           cash: dash.all_time_cash_drawer_paisa ?? dash.total_cash_received_paisa ?? dash.cash_in_drawer_paisa ?? 0,
           easypaisa: dash.all_time_easypaisa_paisa ?? dash.total_easypaisa_received_paisa ?? 0,
           jazzcash: dash.all_time_jazzcash_paisa ?? dash.total_jazzcash_received_paisa ?? 0,
+          netAvailable: dash.net_available_treasury_paisa ?? (
+            (dash.all_time_cash_drawer_paisa ?? 0) +
+            (dash.all_time_easypaisa_paisa ?? 0) +
+            (dash.all_time_jazzcash_paisa ?? 0)
+          ),
         });
       }
 
@@ -148,33 +153,29 @@ export const EmployeeSalaries: React.FC<EmployeeSalariesProps> = ({ currentUser 
       return;
     }
 
-    const availablePaisa = paymentMethod === "EASYPAISA"
-      ? treasuryBalances.easypaisa
-      : paymentMethod === "JAZZCASH"
-      ? treasuryBalances.jazzcash
-      : treasuryBalances.cash;
+    const netAvailablePaisa = treasuryBalances.netAvailable;
 
-    const methodName = paymentMethod === "EASYPAISA"
-      ? "EasyPaisa"
-      : paymentMethod === "JAZZCASH"
-      ? "JazzCash"
-      : "Cash Drawer";
-
-    if (availablePaisa <= 0) {
+    if (netAvailablePaisa > 0 && amountPaisa > netAvailablePaisa) {
       setNotification({
         type: "error",
-        message: `⚠️ Selected payment method (${methodName}) has Rs. 0 balance. Please choose another payment method.`,
+        message: `⚠️ Insufficient Treasury Balance: Net Available Treasury is Rs. ${formatPaisa(netAvailablePaisa)}, but payout amount is Rs. ${formatPaisa(amountPaisa)}.`,
       });
       return;
     }
 
-    if (amountPaisa > availablePaisa) {
-      setNotification({
-        type: "error",
-        message: `⚠️ Insufficient Balance: ${methodName} currently has only Rs. ${formatPaisa(availablePaisa)}, but payout amount is Rs. ${formatPaisa(amountPaisa)}. Please choose another payment method.`,
-      });
-      return;
-    }
+    // Automatically route the disbursement payment method to available funds
+    const chosenMethod =
+      treasuryBalances.cash >= amountPaisa
+        ? "CASH"
+        : treasuryBalances.jazzcash >= amountPaisa
+        ? "JAZZCASH"
+        : treasuryBalances.easypaisa >= amountPaisa
+        ? "EASYPAISA"
+        : treasuryBalances.cash > 0
+        ? "CASH"
+        : treasuryBalances.jazzcash > 0
+        ? "JAZZCASH"
+        : "EASYPAISA";
 
     const staff = staffList.find((s) => s.id === selectedStaffId);
     const employeeName = staff ? staff.name : "Staff Member";
@@ -188,7 +189,7 @@ export const EmployeeSalaries: React.FC<EmployeeSalariesProps> = ({ currentUser 
         employee_role: employeeRole,
         payout_type: payoutType,
         amount_paisa: amountPaisa,
-        payment_method: paymentMethod,
+        payment_method: chosenMethod,
         disbursed_by_user_id: currentUser?.user_id || "usr_admin",
         disbursed_by_name: authorizedByName.trim() || "Owner ( Ameer )",
         notes: notes.trim() || undefined,
@@ -666,33 +667,24 @@ export const EmployeeSalaries: React.FC<EmployeeSalariesProps> = ({ currentUser 
 
             <div>
               <label className="block text-xs font-semibold mb-1 text-slate-700 dark:text-slate-300">
-                Disbursed Through *
+                Disbursement Source *
               </label>
-              <select
-                value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value as any)}
-                className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg py-2 px-3 text-xs text-slate-900 dark:text-slate-100 font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500"
-              >
-                <option value="CASH" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Cash Drawer (Rs. {formatPaisa(treasuryBalances.cash)})</option>
-                <option value="EASYPAISA" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">EasyPaisa (Rs. {formatPaisa(treasuryBalances.easypaisa)})</option>
-                <option value="JAZZCASH" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">JazzCash (Rs. {formatPaisa(treasuryBalances.jazzcash)})</option>
-              </select>
-              <div className="mt-1 flex items-center justify-between text-[11px] font-mono">
-                <span className="text-slate-400">Available:</span>
-                <span className={`font-bold ${
-                  (paymentMethod === "EASYPAISA" ? treasuryBalances.easypaisa : paymentMethod === "JAZZCASH" ? treasuryBalances.jazzcash : treasuryBalances.cash) > 0
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-rose-600 dark:text-rose-400"
-                }`}>
-                  Rs. {formatPaisa(
-                    paymentMethod === "EASYPAISA"
-                      ? treasuryBalances.easypaisa
-                      : paymentMethod === "JAZZCASH"
-                      ? treasuryBalances.jazzcash
-                      : treasuryBalances.cash
-                  )}
-                </span>
+              <div className="bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg py-2 px-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0"></div>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                    Net Available Treasury
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                    Rs. {formatPaisa(treasuryBalances.netAvailable)}
+                  </span>
+                </div>
               </div>
+              <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+                Directly deducted from business liquidity & treasury balance
+              </p>
             </div>
           </div>
 

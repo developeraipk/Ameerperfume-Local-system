@@ -18,6 +18,8 @@ import {
   getProducts,
   getAttars,
 } from "@/lib/tauri-bridge";
+import { loadAllOffers } from "@/lib/offer-service";
+import { PromotionalOffer } from "@/types/offers";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -37,6 +39,8 @@ import {
   Phone,
   MapPin,
   X,
+  FlaskConical,
+  Sparkles,
 } from "lucide-react";
 
 interface OnlineOrdersProps {
@@ -107,7 +111,26 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
 
   // Item Picker in Modal
   const [itemSearch, setItemSearch] = useState("");
-  const [selectedItemType, setSelectedItemType] = useState<"PERFUME" | "ATTAR">("PERFUME");
+  const [selectedItemType, setSelectedItemType] = useState<"PERFUME" | "ATTAR" | "TESTER" | "OFFERS">("PERFUME");
+  const [offers, setOffers] = useState<PromotionalOffer[]>([]);
+
+  // Tester Customizer State
+  const [selectedPerfumeForTester, setSelectedPerfumeForTester] = useState<FinishedProduct | null>(null);
+  const [testerPresetMl, setTesterPresetMl] = useState<1 | 2 | 3 | 5 | "CUSTOM">(1);
+  const [customTesterMl, setCustomTesterMl] = useState<number>(1);
+  const [testerPriceRupees, setTesterPriceRupees] = useState<string>("0");
+  const [testerQty, setTesterQty] = useState<number>(1);
+
+  // Return Items Selection State (For Partial/Full Returns)
+  const [returnItemSelections, setReturnItemSelections] = useState<{
+    originalIndex: number;
+    name: string;
+    maxQty: number;
+    returnQty: number;
+    selected: boolean;
+    unitPricePaisa: number;
+    rawItem: any;
+  }[]>([]);
 
   // Payment Collection Form State
   const [collectAmountRupees, setCollectAmountRupees] = useState("");
@@ -130,14 +153,16 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     setLoading(true);
     setFeedback(null);
     try {
-      const [orderList, prods, atts] = await Promise.all([
+      const [orderList, prods, atts, offersList] = await Promise.all([
         getOnlineOrders(),
         getProducts(),
         getAttars(),
+        loadAllOffers().catch(() => []),
       ]);
       setOrders(orderList || []);
       setProducts(prods || []);
       setAttars(atts || []);
+      setOffers(offersList || []);
     } catch (err: any) {
       console.error("Failed to load online orders:", err);
       setFeedback({
@@ -183,15 +208,22 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   );
   const totalPendingPaisa = waPendingPaisa + webPendingPaisa;
 
-  // Realized Net Cash Collected (Advance paid minus any refunded money)
-  const waCollectedPaisa = waOrders.reduce(
-    (sum, o) => sum + Math.max(0, o.advance_paid_paisa - (o.refund_amount_paisa || 0)),
-    0
-  );
-  const webCollectedPaisa = webOrders.reduce(
-    (sum, o) => sum + Math.max(0, o.advance_paid_paisa - (o.refund_amount_paisa || 0)),
-    0
-  );
+  // Realized Net Cash Collected (Advance paid minus refunds, excluding returned orders unless shop retained deduction)
+  const waCollectedPaisa = waOrders.reduce((sum, o) => {
+    const isReturned = o.payment_status === "RETURNED" || (o.delivery_status as string) === "RETURNED_RTO" || (o.delivery_status as string) === "RETURNED";
+    if (isReturned) {
+      return sum + Math.max(0, o.deduction_amount_paisa || 0);
+    }
+    return sum + Math.max(0, o.advance_paid_paisa - (o.refund_amount_paisa || 0));
+  }, 0);
+
+  const webCollectedPaisa = webOrders.reduce((sum, o) => {
+    const isReturned = o.payment_status === "RETURNED" || (o.delivery_status as string) === "RETURNED_RTO" || (o.delivery_status as string) === "RETURNED";
+    if (isReturned) {
+      return sum + Math.max(0, o.deduction_amount_paisa || 0);
+    }
+    return sum + Math.max(0, o.advance_paid_paisa - (o.refund_amount_paisa || 0));
+  }, 0);
   const totalCollectedPaisa = waCollectedPaisa + webCollectedPaisa;
 
   // Custodian split of pending money
@@ -539,6 +571,26 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const openReturnModal = (order: OnlineOrder) => {
     setSelectedOrder(order);
     setReturnReason("Customer cancelled order / refused parcel / Address unreachable");
+
+    // Parse order items for itemized partial/full return selection
+    let parsed: any[] = [];
+    try {
+      parsed = JSON.parse(order.items_json);
+    } catch {
+      parsed = [];
+    }
+
+    const selections = parsed.map((it, idx) => ({
+      originalIndex: idx,
+      name: it.name || it.product_name || "Fragrance Item",
+      maxQty: it.quantity || 1,
+      returnQty: it.quantity || 1,
+      selected: true,
+      unitPricePaisa: it.unit_price_paisa || Math.round((it.line_total_paisa || 0) / (it.quantity || 1)),
+      rawItem: it,
+    }));
+    setReturnItemSelections(selections);
+
     if (order.advance_paid_paisa > 0) {
       setRefundMode("FULL");
       setRefundDeductionRupees("0");
@@ -555,6 +607,17 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const handleExecuteReturn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedOrder) return;
+
+    // Check which items are selected
+    const selectedReturns = returnItemSelections.filter((it) => it.selected && it.returnQty > 0);
+    if (selectedReturns.length === 0) {
+      alert("Please select at least one item to return!");
+      return;
+    }
+
+    const isAllReturned =
+      selectedReturns.length === returnItemSelections.length &&
+      selectedReturns.every((it) => it.returnQty === it.maxQty);
 
     const advancePaisa = selectedOrder.advance_paid_paisa;
     let refundPaisa = 0;
@@ -577,24 +640,76 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
 
     try {
       setLoading(true);
-      const payload: MarkOnlineReturnPayload = {
-        order_id: selectedOrder.order_id,
-        return_reason: returnReason.trim(),
-        user_id: currentUser?.user_id || "usr_online_mgr",
-        refund_amount_paisa: refundPaisa,
-        deduction_amount_paisa: deductionPaisa,
-        refund_settlement_method: refundPaisa > 0 ? refundPaymentMethod : undefined,
-      };
 
-      await markOnlineOrderReturn(payload);
-      setFeedback({
-        type: "success",
-        text: `✓ Order ${selectedOrder.order_number} marked as Returned (RTO). Stock restocked into inventory! ${
-          refundPaisa > 0
-            ? `Rs. ${formatRs(refundPaisa)} refunded to customer (${refundPaymentMethod}).`
-            : ""
-        } ${deductionPaisa > 0 ? `Rs. ${formatRs(deductionPaisa)} retained as handling deduction.` : ""}`,
-      });
+      if (!isAllReturned) {
+        // Partial return: prepare returned items, remaining items, and new totals
+        const returnedItems = selectedReturns.map((s) => ({
+          ...s.rawItem,
+          quantity: s.returnQty,
+          line_total_paisa: s.returnQty * s.unitPricePaisa,
+        }));
+
+        const remainingItems = returnItemSelections
+          .map((s) => {
+            const returnedCount = s.selected ? s.returnQty : 0;
+            const remainingQty = s.maxQty - returnedCount;
+            if (remainingQty <= 0) return null;
+            return {
+              ...s.rawItem,
+              quantity: remainingQty,
+              line_total_paisa: remainingQty * s.unitPricePaisa,
+            };
+          })
+          .filter(Boolean);
+
+        const newSubtotalPaisa = remainingItems.reduce((sum, it: any) => sum + (it.line_total_paisa || 0), 0);
+        const newTotalPaisa = Math.max(
+          0,
+          newSubtotalPaisa + selectedOrder.delivery_charges_paisa - selectedOrder.discount_paisa
+        );
+
+        const payload: MarkOnlineReturnPayload = {
+          order_id: selectedOrder.order_id,
+          return_reason: returnReason.trim(),
+          user_id: currentUser?.user_id || "usr_online_mgr",
+          refund_amount_paisa: refundPaisa,
+          deduction_amount_paisa: deductionPaisa,
+          refund_settlement_method: refundPaisa > 0 ? refundPaymentMethod : undefined,
+          returned_items_json: JSON.stringify(returnedItems),
+          remaining_items_json: JSON.stringify(remainingItems),
+          new_total_paisa: newTotalPaisa,
+          new_subtotal_paisa: newSubtotalPaisa,
+          is_partial: true,
+        };
+
+        await markOnlineOrderReturn(payload);
+        setFeedback({
+          type: "success",
+          text: `✓ Partial return recorded for ${selectedOrder.order_number}! Selected items restocked into inventory.`,
+        });
+      } else {
+        // Full return
+        const payload: MarkOnlineReturnPayload = {
+          order_id: selectedOrder.order_id,
+          return_reason: returnReason.trim(),
+          user_id: currentUser?.user_id || "usr_online_mgr",
+          refund_amount_paisa: refundPaisa,
+          deduction_amount_paisa: deductionPaisa,
+          refund_settlement_method: refundPaisa > 0 ? refundPaymentMethod : undefined,
+          is_partial: false,
+        };
+
+        await markOnlineOrderReturn(payload);
+        setFeedback({
+          type: "success",
+          text: `✓ Order ${selectedOrder.order_number} marked as Returned (RTO). Stock restocked into inventory! ${
+            refundPaisa > 0
+              ? `Rs. ${formatRs(refundPaisa)} refunded to customer (${refundPaymentMethod}).`
+              : ""
+          } ${deductionPaisa > 0 ? `Rs. ${formatRs(deductionPaisa)} retained as handling deduction.` : ""}`,
+        });
+      }
+
       setIsReturnModalOpen(false);
       setSelectedOrder(null);
       await loadData();
@@ -661,6 +776,8 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
 
     const isPrepaidOrStaff =
       order.cod_balance_paisa <= 0 ||
+      order.advance_paid_paisa >= order.total_amount_paisa ||
+      (order.total_amount_paisa - order.advance_paid_paisa) <= 0 ||
       order.payment_status === "PAID" ||
       order.payment_custodian === "STAFF_HANDLER" ||
       order.payment_custodian === "SETTLED";
@@ -672,7 +789,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
           <div style="text-align: center; padding-bottom: 3px;">
             <img src="/logo-receipt.png" style="width: 44mm; height: auto; margin: 0 auto 3px auto; display: block; image-rendering: pixelated;" alt="Ameer Perfumes" />
             <div style="font-size: 8.5px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; color: #000000;">HAUTE PARFUMERIE & LUXURY ATTARS</div>
-            <div style="font-size: 9px; font-weight: 700; color: #000000; margin-top: 1px;">Sports Complex, Bannu • Cell: 0310-0988522</div>
+            <div style="font-size: 9px; font-weight: 700; color: #000000; margin-top: 1px;">Sports Complex, Bannu • Cell: 0329 9969277</div>
             <!-- Clean Badge without Solid Inversion to Prevent Printer Ink Bleed -->
             <div style="margin: 5px auto 2px auto; display: inline-block; border: 1.5px solid #000000; border-radius: 4px; padding: 2px 10px; font-size: 10px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; background: #ffffff; color: #000000;">
               ${order.channel === "WHATSAPP" ? "💬 WHATSAPP PARCEL DISPATCH" : "🌐 WEBSITE PARCEL DISPATCH"}
@@ -796,7 +913,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
           <div style="border-top: 1.5px dashed #000000; margin: 6px 0 4px 0;"></div>
           <div style="text-align: center; font-size: 9.5px; font-weight: 600; line-height: 1.35;">
             Thank you for choosing Ameer Perfumes!<br/>
-            Complaints & Support: <strong>0310-0988522</strong><br/>
+            Complaints & Support: <strong>0329 9969277</strong><br/>
             <span style="font-size: 8.5px; font-weight: 700; color: #000000; margin-top: 2px; display: inline-block;">
               Software Developed by Global Tech • Contact: 0329 9969277
             </span>
@@ -813,7 +930,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
               <div>
                 <h1 style="font-size: 22px; font-weight: 800; color: #d97706; margin: 0; letter-spacing: 0.5px;">AMEER PERFUMES</h1>
                 <p style="font-size: 11px; color: #64748b; margin: 2px 0 0 0; text-transform: uppercase; font-weight: 600;">Haute Parfumerie & Concentrated Perfume Oils</p>
-                <p style="font-size: 11px; color: #64748b; margin: 2px 0 0 0;">Main Sports Complex, Bannu • Cell: 0310-0988522</p>
+                <p style="font-size: 11px; color: #64748b; margin: 2px 0 0 0;">Main Sports Complex, Bannu • Cell: 0329 9969277</p>
               </div>
             </div>
             <div style="text-align: right;">
@@ -1060,28 +1177,26 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
 
       {/* EXECUTIVE KPI SUMMARY CARDS */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
-        {/* Card 1: Total Orders & Gross Value */}
+        {/* Card 1: TOTAL GROSS */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-4 rounded-xl shadow-xs">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
-            <span>Total Online Orders</span>
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono font-bold tracking-wider">
+            <span>TOTAL GROSS</span>
             <Globe className="w-4 h-4 text-blue-500" />
           </div>
-          <div className="flex items-baseline justify-between mt-1">
-            <span className="text-2xl font-bold font-mono text-slate-900 dark:text-slate-100">
-              {orders.length} Orders
-            </span>
-            <span className="text-xs font-mono font-bold text-slate-700 dark:text-slate-300">
-              Gross: Rs. {formatRs(totalGrossOrderValuePaisa)}
-            </span>
-          </div>
-          <div className="mt-1 pt-1 border-t border-slate-100 dark:border-slate-800/80 flex flex-col gap-0.5 text-[11px] font-mono">
-            <div className="flex justify-between text-slate-500">
-              <span>💬 WA: {waOrders.length} (Rs. {formatRs(waGrossOrderValuePaisa)})</span>
-              <span>🌐 Web: {webOrders.length} (Rs. {formatRs(webGrossOrderValuePaisa)})</span>
+          <span className="text-2xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-1 block">
+            Rs. {formatRs(totalGrossOrderValuePaisa)}
+          </span>
+          <span className="text-xs font-mono font-semibold text-slate-500 dark:text-slate-400 block -mt-0.5">
+            {orders.length} Total Online Orders
+          </span>
+          <div className="mt-2 pt-1.5 border-t border-slate-100 dark:border-slate-800/80 flex flex-col gap-1 text-[11px] font-mono">
+            <div className="flex justify-between items-center text-slate-600 dark:text-slate-400">
+              <span>💬 WA: {waOrders.length} Orders</span>
+              <span className="font-bold text-slate-800 dark:text-slate-200">Rs. {formatRs(waGrossOrderValuePaisa)}</span>
             </div>
-            <div className="flex justify-between font-semibold">
-              <span className="text-emerald-600 dark:text-emerald-400">Rec: Rs. {formatRs(totalCollectedPaisa)}</span>
-              <span className="text-amber-600 dark:text-amber-400">Pend: Rs. {formatRs(totalPendingPaisa)}</span>
+            <div className="flex justify-between items-center text-slate-600 dark:text-slate-400">
+              <span>🌐 Web: {webOrders.length} Orders</span>
+              <span className="font-bold text-slate-800 dark:text-slate-200">Rs. {formatRs(webGrossOrderValuePaisa)}</span>
             </div>
           </div>
         </div>
@@ -1646,6 +1761,30 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                     >
                       Attars
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedItemType("TESTER")}
+                      className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer flex items-center gap-1 ${
+                        selectedItemType === "TESTER"
+                          ? "bg-purple-600 text-white font-bold"
+                          : "text-slate-500"
+                      }`}
+                    >
+                      <FlaskConical className="w-3 h-3" />
+                      <span>Testers</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedItemType("OFFERS")}
+                      className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer flex items-center gap-1 ${
+                        selectedItemType === "OFFERS"
+                          ? "bg-emerald-600 text-white font-bold"
+                          : "text-slate-500"
+                      }`}
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      <span>Offers</span>
+                    </button>
                   </div>
                 </div>
 
@@ -1661,79 +1800,277 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                 </div>
 
                 {/* Products Grid to click & add */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto p-1.5 border border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50 dark:bg-slate-950/40">
-                  {selectedItemType === "PERFUME"
-                    ? products
-                        .filter((p) => !itemSearch.trim() || p.name.toLowerCase().includes(itemSearch.toLowerCase()))
-                        .slice(0, 16)
-                        .map((p) => {
-                          const stock = p.current_stock_units ?? 0;
-                          const isOutOfStock = stock <= 0;
-                          return (
-                            <button
-                              key={p.product_id}
-                              type="button"
-                              onClick={() => {
-                                if (isOutOfStock) return;
-                                handleAddItem(p, "PERFUME");
-                              }}
-                              disabled={isOutOfStock}
-                              className={`p-2 rounded-lg border text-left transition-all flex flex-col justify-between ${
-                                isOutOfStock
-                                  ? "opacity-40 cursor-not-allowed bg-rose-500/5 border-rose-500/30"
-                                  : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-amber-500 cursor-pointer shadow-2xs"
-                              }`}
-                            >
-                              <div className="flex items-start justify-between gap-1">
-                                <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
-                                  {p.name}
-                                </span>
-                                {isOutOfStock ? (
-                                  <span className="text-[9px] font-bold text-rose-600 bg-rose-100 dark:bg-rose-950/60 px-1 py-0.2 rounded shrink-0">
-                                    0 Stock
-                                  </span>
-                                ) : (
-                                  <span className="text-[9px] font-mono text-emerald-600 dark:text-emerald-400 shrink-0">
-                                    {stock} left
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center justify-between text-[10px] font-mono mt-1 text-slate-500">
-                                <span>{p.size_ml}ml</span>
-                                <span className={`font-bold ${isOutOfStock ? "text-slate-400 line-through" : "text-amber-600 dark:text-amber-400"}`}>
-                                  Rs. {formatRs(p.retail_price_paisa)}
-                                </span>
-                              </div>
-                            </button>
-                          );
-                        })
-                    : attars
-                        .filter((a) => !itemSearch.trim() || a.name.toLowerCase().includes(itemSearch.toLowerCase()))
-                        .slice(0, 16)
-                        .map((a) => (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-44 overflow-y-auto p-1.5 border border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50 dark:bg-slate-950/40">
+                  {selectedItemType === "PERFUME" &&
+                    products
+                      .filter((p) => !itemSearch.trim() || p.name.toLowerCase().includes(itemSearch.toLowerCase()))
+                      .slice(0, 16)
+                      .map((p) => {
+                        const stock = p.current_stock_units ?? 0;
+                        const isOutOfStock = stock <= 0;
+                        return (
                           <button
-                            key={a.attar_id}
+                            key={p.product_id}
                             type="button"
-                            onClick={() => handleAddItem(a, "ATTAR")}
-                            className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-left hover:border-emerald-500 transition-all cursor-pointer flex flex-col justify-between shadow-2xs"
+                            onClick={() => {
+                              if (isOutOfStock) return;
+                              handleAddItem(p, "PERFUME");
+                            }}
+                            disabled={isOutOfStock}
+                            className={`p-2 rounded-lg border text-left transition-all flex flex-col justify-between ${
+                              isOutOfStock
+                                ? "opacity-40 cursor-not-allowed bg-rose-500/5 border-rose-500/30"
+                                : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-amber-500 cursor-pointer shadow-2xs"
+                            }`}
                           >
                             <div className="flex items-start justify-between gap-1">
                               <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
-                                {a.name}
+                                {p.name}
                               </span>
-                              <span className="text-[9px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-1 py-0.2 rounded shrink-0">
-                                Decant / Portion
-                              </span>
+                              {isOutOfStock ? (
+                                <span className="text-[9px] font-bold text-rose-600 bg-rose-100 dark:bg-rose-950/60 px-1 py-0.2 rounded shrink-0">
+                                  0 Stock
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-mono text-emerald-600 dark:text-emerald-400 shrink-0">
+                                  {stock} left
+                                </span>
+                              )}
                             </div>
                             <div className="flex items-center justify-between text-[10px] font-mono mt-1 text-slate-500">
-                              <span>1 Tola / Custom Rate</span>
-                              <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                                Rs. {formatRs(a.selling_price_per_tola_paisa)}
+                              <span>{p.size_ml}ml</span>
+                              <span className={`font-bold ${isOutOfStock ? "text-slate-400 line-through" : "text-amber-600 dark:text-amber-400"}`}>
+                                Rs. {formatRs(p.retail_price_paisa)}
                               </span>
                             </div>
                           </button>
-                        ))}
+                        );
+                      })}
+
+                  {selectedItemType === "ATTAR" &&
+                    attars
+                      .filter((a) => !itemSearch.trim() || a.name.toLowerCase().includes(itemSearch.toLowerCase()))
+                      .slice(0, 16)
+                      .map((a) => (
+                        <button
+                          key={a.attar_id}
+                          type="button"
+                          onClick={() => handleAddItem(a, "ATTAR")}
+                          className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-left hover:border-emerald-500 transition-all cursor-pointer flex flex-col justify-between shadow-2xs"
+                        >
+                          <div className="flex items-start justify-between gap-1">
+                            <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                              {a.name}
+                            </span>
+                            <span className="text-[9px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-1 py-0.2 rounded shrink-0">
+                              Decant / Portion
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] font-mono mt-1 text-slate-500">
+                            <span>1 Tola / Custom Rate</span>
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                              Rs. {formatRs(a.selling_price_per_tola_paisa)}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+
+                  {selectedItemType === "TESTER" &&
+                    products
+                      .filter((p) => !itemSearch.trim() || p.name.toLowerCase().includes(itemSearch.toLowerCase()))
+                      .slice(0, 16)
+                      .map((p) => (
+                        <button
+                          key={`tester_${p.product_id}`}
+                          type="button"
+                          onClick={() => {
+                            setSelectedPerfumeForTester(p);
+                            setTesterPresetMl(1);
+                            setCustomTesterMl(1);
+                            setTesterPriceRupees("0");
+                            setTesterQty(1);
+                          }}
+                          className="p-2 rounded-lg border border-purple-200 dark:border-purple-900/50 bg-white dark:bg-slate-900 text-left hover:border-purple-500 transition-all cursor-pointer flex flex-col justify-between shadow-2xs group"
+                        >
+                          <div className="flex items-start justify-between gap-1">
+                            <span className="font-semibold text-slate-800 dark:text-slate-200 truncate group-hover:text-purple-600">
+                              {p.name}
+                            </span>
+                            <span className="text-[9px] font-bold text-purple-700 dark:text-purple-300 bg-purple-500/15 px-1 py-0.2 rounded shrink-0 flex items-center gap-0.5">
+                              <FlaskConical className="w-2.5 h-2.5" />
+                              <span>Tester</span>
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] font-mono mt-1 text-slate-500">
+                            <span>1ml, 2ml, 3ml, 5ml</span>
+                            <span className="font-bold text-purple-600 dark:text-purple-400">Sample Dispense</span>
+                          </div>
+                        </button>
+                      ))}
+
+                  {selectedItemType === "OFFERS" &&
+                    (offers.length === 0 ? (
+                      <div className="col-span-2 sm:col-span-3 p-4 text-center text-xs text-slate-500">
+                        No promotional offers active.
+                      </div>
+                    ) : (
+                      offers
+                        .filter((off) => off.is_active && (!itemSearch.trim() || off.title.toLowerCase().includes(itemSearch.toLowerCase())))
+                        .map((off) => (
+                          <div
+                            key={off.offer_id}
+                            className="p-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-500/5 dark:bg-amber-950/20 flex flex-col justify-between"
+                          >
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-xs text-amber-900 dark:text-amber-200 truncate">
+                                  🎁 {off.title}
+                                </span>
+                                <span className="text-[10px] font-mono line-through text-slate-400">
+                                  Rs. {formatRs(Math.round(off.regular_total * 100))}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-1 line-clamp-1">
+                                {off.items.map((i) => `${i.quantity}x ${i.name}`).join(", ")}
+                              </p>
+                            </div>
+                            <div className="flex items-center justify-between mt-2 pt-1 border-t border-amber-200 dark:border-amber-900/50">
+                              <span className="text-xs font-mono font-bold text-amber-700 dark:text-amber-300">
+                                Rs. {formatRs(Math.round(off.bundle_price * 100))}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const pricePaisa = Math.round(off.bundle_price * 100);
+                                  const newItem: OnlineOrderItem = {
+                                    name: `🎁 Offer: ${off.title}`,
+                                    item_type: "OFFER",
+                                    quantity: 1,
+                                    unit_price_paisa: pricePaisa,
+                                    line_total_paisa: pricePaisa,
+                                  };
+                                  setOrderItems([...orderItems, newItem]);
+                                }}
+                                className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-[10px] cursor-pointer"
+                              >
+                                + Add Bundle
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                    ))}
                 </div>
+
+                {/* Tester Dispensing Modal Dialog */}
+                {selectedPerfumeForTester && (
+                  <div className="p-3.5 bg-purple-500/10 border border-purple-500/30 rounded-xl space-y-3">
+                    <div className="flex items-center justify-between border-b border-purple-200 dark:border-purple-800/60 pb-2">
+                      <div className="flex items-center gap-1.5 font-bold text-xs text-purple-900 dark:text-purple-200">
+                        <FlaskConical className="w-4 h-4 text-purple-600" />
+                        <span>Dispense Tester: {selectedPerfumeForTester.name}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPerfumeForTester(null)}
+                        className="text-slate-400 hover:text-slate-600 text-xs font-bold"
+                      >
+                        ✕ Cancel
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold mb-1 text-slate-700 dark:text-slate-300">
+                        Select Volume (ml):
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        {[1, 2, 3, 5, "CUSTOM"].map((preset) => (
+                          <button
+                            key={String(preset)}
+                            type="button"
+                            onClick={() => setTesterPresetMl(preset as any)}
+                            className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all cursor-pointer ${
+                              testerPresetMl === preset
+                                ? "bg-purple-600 text-white border-purple-600 shadow-xs"
+                                : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-purple-400"
+                            }`}
+                          >
+                            {preset === "CUSTOM" ? "Custom" : `${preset}ml`}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {testerPresetMl === "CUSTOM" && (
+                      <div className="w-36">
+                        <label className="block text-[11px] font-semibold mb-1 text-slate-700 dark:text-slate-300">
+                          Custom ml:
+                        </label>
+                        <Input
+                          type="number"
+                          min="1"
+                          value={customTesterMl}
+                          onChange={(e) => setCustomTesterMl(parseInt(e.target.value) || 1)}
+                          className="h-7 text-xs font-mono font-bold"
+                        />
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-semibold mb-1 text-slate-700 dark:text-slate-300">
+                          Quantity:
+                        </label>
+                        <Input
+                          type="number"
+                          min="1"
+                          value={testerQty}
+                          onChange={(e) => setTesterQty(parseInt(e.target.value) || 1)}
+                          className="h-7 text-xs font-mono font-bold text-center"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold mb-1 text-slate-700 dark:text-slate-300">
+                          Price (PKR, 0 = Free Complimentary):
+                        </label>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={testerPriceRupees}
+                          onChange={(e) => setTesterPriceRupees(e.target.value)}
+                          placeholder="0"
+                          className="h-7 text-xs font-mono font-bold text-purple-600"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-1">
+                      <Button
+                        type="button"
+                        variant="primary"
+                        onClick={() => {
+                          const ml = testerPresetMl === "CUSTOM" ? customTesterMl : testerPresetMl;
+                          const ratePaisa = Math.round(Math.max(0, parseFloat(testerPriceRupees) || 0) * 100);
+                          const qty = Math.max(1, testerQty);
+                          const newItem: OnlineOrderItem = {
+                            product_id: selectedPerfumeForTester.product_id,
+                            name: `${selectedPerfumeForTester.name} (Tester ${ml}ml)`,
+                            item_type: "TESTER",
+                            quantity: qty,
+                            unit_price_paisa: ratePaisa,
+                            line_total_paisa: ratePaisa * qty,
+                            is_tester: true,
+                          };
+                          setOrderItems([...orderItems, newItem]);
+                          setSelectedPerfumeForTester(null);
+                        }}
+                        className="text-xs bg-purple-600 hover:bg-purple-700 text-white font-bold cursor-pointer"
+                      >
+                        ✓ Add Tester to Order
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Selected Items Table */}
                 {orderItems.length > 0 && (
@@ -2074,10 +2411,75 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
               <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-700 dark:text-rose-300">
                 <p className="font-semibold mb-1">⚠️ Return & Restock Action:</p>
                 <ul className="list-disc pl-4 space-y-0.5 text-[11px]">
-                  <li>All perfume bottles and attars will be restocked back into inventory.</li>
-                  <li>The pending COD receivable of <strong>Rs. {formatRs(selectedOrder.cod_balance_paisa)}</strong> will be cleared to 0.</li>
-                  <li>Order status will be updated to <strong>RETURNED_RTO</strong>.</li>
+                  <li>Selected returned items will be restocked back into inventory.</li>
+                  <li>Order status will be updated (Full Return or Partial Return).</li>
                 </ul>
+              </div>
+
+              {/* Itemized Selection for Partial or Full Return */}
+              <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-slate-50/50 dark:bg-slate-950/40">
+                <div className="bg-slate-100 dark:bg-slate-800/80 px-3 py-2 flex items-center justify-between font-bold text-[11px] text-slate-700 dark:text-slate-300">
+                  <span>Select Items to Return & Restock:</span>
+                  <span className="font-mono text-rose-600 dark:text-rose-400">
+                    {returnItemSelections.filter((i) => i.selected).length} of {returnItemSelections.length} items selected
+                  </span>
+                </div>
+                <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-48 overflow-y-auto p-1.5 space-y-1">
+                  {returnItemSelections.map((item, idx) => (
+                    <div
+                      key={idx}
+                      className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                        item.selected
+                          ? "bg-white dark:bg-slate-900 border-rose-300/60 dark:border-rose-900/40 shadow-2xs"
+                          : "bg-slate-50 dark:bg-slate-900/30 border-transparent opacity-60"
+                      }`}
+                    >
+                      <label className="flex items-center gap-2 cursor-pointer select-none flex-1">
+                        <input
+                          type="checkbox"
+                          checked={item.selected}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setReturnItemSelections((prev) =>
+                              prev.map((it, i) => (i === idx ? { ...it, selected: checked } : it))
+                            );
+                          }}
+                          className="rounded border-slate-300 text-rose-600 focus:ring-rose-500 w-4 h-4 cursor-pointer"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-800 dark:text-slate-200">
+                            {item.name}
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            Purchased: {item.maxQty} units • Unit: Rs. {formatRs(item.unitPricePaisa)}
+                          </div>
+                        </div>
+                      </label>
+
+                      {item.selected && (
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[10px] text-slate-500">Qty:</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max={item.maxQty}
+                            value={item.returnQty}
+                            onChange={(e) => {
+                              const val = Math.max(1, Math.min(item.maxQty, parseInt(e.target.value) || 1));
+                              setReturnItemSelections((prev) =>
+                                prev.map((it, i) => (i === idx ? { ...it, returnQty: val } : it))
+                              );
+                            }}
+                            className="w-14 h-7 text-center font-mono font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs"
+                          />
+                          <span className="text-xs font-mono font-bold text-rose-600 dark:text-rose-400 w-20 text-right">
+                            Rs. {formatRs(item.returnQty * item.unitPricePaisa)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* Advance Paid & Refund Settlement Options */}
@@ -2192,7 +2594,6 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                         <option value="CASH">💵 Cash</option>
                         <option value="EASYPAISA">📱 EasyPaisa</option>
                         <option value="JAZZCASH">📱 JazzCash</option>
-                        <option value="BANK_TRANSFER">🏦 Bank Transfer</option>
                       </select>
                     </div>
                   )}

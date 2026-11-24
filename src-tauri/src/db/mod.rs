@@ -6701,7 +6701,7 @@ impl DatabaseManager {
         let (online_period_refunds, online_period_returns_count): (i64, i64) = conn.query_row(
             &format!(
                 "SELECT 
-                    COALESCE(SUM(CASE WHEN deduction_amount_paisa > 0 THEN MAX(0, total_amount_paisa - deduction_amount_paisa) ELSE total_amount_paisa END), 0),
+                    COALESCE(SUM(total_amount_paisa), 0),
                     COUNT(*)
                  FROM online_orders
                  WHERE (payment_status = 'RETURNED' OR delivery_status = 'RETURNED_RTO' OR delivery_status = 'RETURNED')
@@ -6726,7 +6726,7 @@ impl DatabaseManager {
 
         let (online_mtd_refunds, online_mtd_returns_count): (i64, i64) = conn.query_row(
             "SELECT 
-                COALESCE(SUM(CASE WHEN deduction_amount_paisa > 0 THEN MAX(0, total_amount_paisa - deduction_amount_paisa) ELSE total_amount_paisa END), 0),
+                COALESCE(SUM(total_amount_paisa), 0),
                 COUNT(*)
              FROM online_orders
              WHERE (payment_status = 'RETURNED' OR delivery_status = 'RETURNED_RTO' OR delivery_status = 'RETURNED')
@@ -6879,7 +6879,7 @@ impl DatabaseManager {
         let tester_clean_ret_units = (tester_ret_units - tester_damaged_ret_units).max(0);
 
         let mut onl_items_stmt = conn.prepare(&format!(
-            "SELECT items_json, payment_status, delivery_status FROM online_orders WHERE delivery_status != 'CANCELLED' AND {};",
+            "SELECT items_json, payment_status, delivery_status, subtotal_paisa, total_amount_paisa FROM online_orders WHERE delivery_status != 'CANCELLED' AND {};",
             onl_cond
         )).ok();
 
@@ -6912,16 +6912,27 @@ impl DatabaseManager {
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1).unwrap_or_default(),
                     r.get::<_, String>(2).unwrap_or_default(),
+                    r.get::<_, i64>(3).unwrap_or(0),
+                    r.get::<_, i64>(4).unwrap_or(0),
                 ))
             }) {
-                for (json_str, p_status, d_status) in rows.flatten() {
+                for (json_str, p_status, d_status, o_subtotal, o_total) in rows.flatten() {
                     let is_ret = p_status == "RETURNED" || d_status == "RETURNED_RTO" || d_status == "RETURNED";
                     if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
                         for it in parsed {
-                            let itype = it.get("item_type").and_then(|v| v.as_str()).unwrap_or("PERFUME");
-                            let pname = it.get("product_name").and_then(|v| v.as_str()).unwrap_or("Fragrance");
+                            let itype = it.get("item_type").and_then(|v| v.as_str())
+                                .or_else(|| if it.get("attar_id").is_some() { Some("ATTAR") } else if it.get("product_id").is_some() { Some("PERFUME") } else { None })
+                                .unwrap_or("PERFUME");
+                            let pname = it.get("name").and_then(|v| v.as_str())
+                                .or_else(|| it.get("product_name").and_then(|v| v.as_str()))
+                                .unwrap_or("Fragrance");
                             let qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
-                            let ltotal = it.get("line_total_paisa").and_then(|l| l.as_i64()).unwrap_or(0);
+                            let raw_ltotal = it.get("line_total_paisa").and_then(|l| l.as_i64()).unwrap_or(0);
+                            let ltotal = if o_subtotal > 0 && o_total < o_subtotal {
+                                (raw_ltotal as f64 * (o_total as f64 / o_subtotal as f64)).round() as i64
+                            } else {
+                                raw_ltotal
+                            };
 
                             let is_tester = itype == "TESTER" || pname.to_lowercase().contains("tester") || pname.to_lowercase().contains("sample");
                             let is_attar = itype == "ATTAR" && !is_tester;
@@ -7313,11 +7324,13 @@ impl DatabaseManager {
                 WHERE wp.payment_method = 'CASH' AND COALESCE(wi.is_voided, 0) = 0 AND {}
                 UNION ALL
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
-                WHERE UPPER(oop.payment_method) = 'CASH' AND {}
+                JOIN online_orders oo ON oop.order_id = oo.order_id
+                WHERE UPPER(oop.payment_method) = 'CASH' AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO' AND {}
                 UNION ALL
                 SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
                 WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
                   AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH' 
+                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
             );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
             [],
@@ -7343,11 +7356,14 @@ impl DatabaseManager {
                    AND COALESCE(wi.is_voided, 0) = 0 AND {}
                 UNION ALL
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
-                WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%') AND {}
+                JOIN online_orders oo ON oop.order_id = oo.order_id
+                WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%')
+                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO' AND {}
                 UNION ALL
                 SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
                 WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%') 
+                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
             );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
             [],
@@ -7373,11 +7389,14 @@ impl DatabaseManager {
                    AND COALESCE(wi.is_voided, 0) = 0 AND {}
                 UNION ALL
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
-                WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%') AND {}
+                JOIN online_orders oo ON oop.order_id = oo.order_id
+                WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%')
+                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO' AND {}
                 UNION ALL
                 SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
                 WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%') 
+                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
             );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
             [],
@@ -7495,11 +7514,14 @@ impl DatabaseManager {
                 WHERE wp.payment_method = 'CASH' AND COALESCE(wi.is_voided, 0) = 0
                 UNION ALL
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE UPPER(oop.payment_method) = 'CASH'
+                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                 UNION ALL
                 SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
                 WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
                   AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH'
+                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
             );",
             [],
@@ -7525,11 +7547,14 @@ impl DatabaseManager {
                    AND COALESCE(wi.is_voided, 0) = 0
                 UNION ALL
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%')
+                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                 UNION ALL
                 SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
                 WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%')
+                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
             );",
             [],
@@ -7555,11 +7580,14 @@ impl DatabaseManager {
                    AND COALESCE(wi.is_voided, 0) = 0
                 UNION ALL
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%')
+                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                 UNION ALL
                 SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
                 WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%')
+                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
             );",
             [],
@@ -7619,7 +7647,10 @@ impl DatabaseManager {
         ).unwrap_or((0, 0));
 
         let total_online_collected_paisa: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(amount_paid_paisa), 0) FROM online_order_payments;",
+            "SELECT COALESCE(SUM(oop.amount_paid_paisa), 0) 
+             FROM online_order_payments oop
+             JOIN online_orders oo ON oop.order_id = oo.order_id
+             WHERE oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO';",
             [],
             |r| r.get(0)
         ).unwrap_or(0);
@@ -9251,13 +9282,25 @@ impl DatabaseManager {
         let mut conn = self.get_connection().map_err(|e| e.to_string())?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-        let items_json: String = tx.query_row(
-            "SELECT items_json FROM online_orders WHERE order_id = ?;",
-            [&payload.order_id],
-            |r| r.get(0),
-        ).map_err(|e| format!("Order not found: {}", e))?;
+        let items_to_restock_json = if let Some(ref r_json) = payload.returned_items_json {
+            if !r_json.trim().is_empty() {
+                r_json.clone()
+            } else {
+                tx.query_row(
+                    "SELECT items_json FROM online_orders WHERE order_id = ?;",
+                    [&payload.order_id],
+                    |r| r.get(0),
+                ).map_err(|e| format!("Order not found: {}", e))?
+            }
+        } else {
+            tx.query_row(
+                "SELECT items_json FROM online_orders WHERE order_id = ?;",
+                [&payload.order_id],
+                |r| r.get(0),
+            ).map_err(|e| format!("Order not found: {}", e))?
+        };
 
-        if let Ok(parsed_items) = serde_json::from_str::<Vec<serde_json::Value>>(&items_json) {
+        if let Ok(parsed_items) = serde_json::from_str::<Vec<serde_json::Value>>(&items_to_restock_json) {
             for it in parsed_items {
                 let qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
                 if let Some(pid) = it.get("product_id").and_then(|p| p.as_str()) {
@@ -9279,25 +9322,68 @@ impl DatabaseManager {
         let deduct_amt = payload.deduction_amount_paisa.unwrap_or(0);
         let refund_method = payload.refund_settlement_method.clone().unwrap_or_else(|| "CASH".to_string());
 
-        tx.execute("
-            UPDATE online_orders
-            SET delivery_status = 'RETURNED_RTO',
-                payment_status = 'RETURNED',
-                payment_custodian = 'RETURNED',
-                cod_balance_paisa = 0,
-                collected_at = datetime('now', 'localtime'),
-                return_reason = ?,
-                refund_amount_paisa = ?,
-                deduction_amount_paisa = ?,
-                refund_settlement_method = ?
-            WHERE order_id = ?;
-        ", rusqlite::params![
-            payload.return_reason,
-            refund_amt,
-            deduct_amt,
-            refund_method,
-            payload.order_id,
-        ]).map_err(|e| format!("Failed to mark return: {}", e))?;
+        if payload.is_partial == Some(true) {
+            if let (Some(ref rem_json), Some(new_tot), Some(new_sub)) = (&payload.remaining_items_json, payload.new_total_paisa, payload.new_subtotal_paisa) {
+                let (curr_adv, _): (i64, i64) = tx.query_row(
+                    "SELECT advance_paid_paisa, cod_balance_paisa FROM online_orders WHERE order_id = ?;",
+                    [&payload.order_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                ).map_err(|e| format!("Order not found: {}", e))?;
+
+                let new_adv = (curr_adv - refund_amt).max(0);
+                let new_cod = (new_tot - new_adv).max(0);
+                let new_pay_status = if new_cod == 0 { "PAID" } else { "PARTIAL" };
+
+                tx.execute("
+                    UPDATE online_orders
+                    SET items_json = ?,
+                        subtotal_paisa = ?,
+                        total_amount_paisa = ?,
+                        advance_paid_paisa = ?,
+                        cod_balance_paisa = ?,
+                        payment_status = ?,
+                        delivery_status = 'PARTIAL_RETURN',
+                        collected_at = datetime('now', 'localtime'),
+                        return_reason = ?,
+                        refund_amount_paisa = COALESCE(refund_amount_paisa, 0) + ?,
+                        deduction_amount_paisa = ?,
+                        refund_settlement_method = ?
+                    WHERE order_id = ?;
+                ", rusqlite::params![
+                    rem_json,
+                    new_sub,
+                    new_tot,
+                    new_adv,
+                    new_cod,
+                    new_pay_status,
+                    payload.return_reason,
+                    refund_amt,
+                    deduct_amt,
+                    refund_method,
+                    payload.order_id,
+                ]).map_err(|e| format!("Failed to record partial return: {}", e))?;
+            }
+        } else {
+            tx.execute("
+                UPDATE online_orders
+                SET delivery_status = 'RETURNED_RTO',
+                    payment_status = 'RETURNED',
+                    payment_custodian = 'RETURNED',
+                    cod_balance_paisa = 0,
+                    collected_at = datetime('now', 'localtime'),
+                    return_reason = ?,
+                    refund_amount_paisa = ?,
+                    deduction_amount_paisa = ?,
+                    refund_settlement_method = ?
+                WHERE order_id = ?;
+            ", rusqlite::params![
+                payload.return_reason,
+                refund_amt,
+                deduct_amt,
+                refund_method,
+                payload.order_id,
+            ]).map_err(|e| format!("Failed to mark return: {}", e))?;
+        }
 
         tx.commit().map_err(|e| e.to_string())?;
         Ok(true)
@@ -9404,6 +9490,16 @@ pub struct MarkOnlineReturnPayload {
     pub refund_amount_paisa: Option<i64>,
     pub deduction_amount_paisa: Option<i64>,
     pub refund_settlement_method: Option<String>,
+    #[serde(default)]
+    pub returned_items_json: Option<String>,
+    #[serde(default)]
+    pub remaining_items_json: Option<String>,
+    #[serde(default)]
+    pub new_total_paisa: Option<i64>,
+    #[serde(default)]
+    pub new_subtotal_paisa: Option<i64>,
+    #[serde(default)]
+    pub is_partial: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

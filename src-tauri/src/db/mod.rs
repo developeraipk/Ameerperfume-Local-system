@@ -6712,8 +6712,22 @@ impl DatabaseManager {
             ),
         };
 
-        // 0. Returns & refunds for the selected period
-        let (period_refunds, period_returns_count): (i64, i64) = conn.query_row(
+        let onl_cond = match period_type.as_str() {
+            "weekly" => "date(created_at) >= date('now', '-7 days')",
+            "monthly" => "strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')",
+            "yearly" => "strftime('%Y', created_at) = strftime('%Y', 'now')",
+            _ => "(date(created_at) = date('now') OR date(created_at) = date('now', 'localtime'))",
+        };
+
+        let onl_ret_cond = match period_type.as_str() {
+            "weekly" => "(date(created_at) >= date('now', '-7 days') OR (collected_at IS NOT NULL AND date(collected_at) >= date('now', '-7 days')))",
+            "monthly" => "(strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now') OR (collected_at IS NOT NULL AND strftime('%Y-%m', collected_at) = strftime('%Y-%m', 'now')))",
+            "yearly" => "(strftime('%Y', created_at) = strftime('%Y', 'now') OR (collected_at IS NOT NULL AND strftime('%Y', collected_at) = strftime('%Y', 'now')))",
+            _ => "((date(created_at) = date('now') OR date(created_at) = date('now', 'localtime')) OR (collected_at IS NOT NULL AND (date(collected_at) = date('now') OR date(collected_at) = date('now', 'localtime'))))",
+        };
+
+        // 0. Returns & refunds for the selected period (Retail POS + Online Orders Return / RTO)
+        let (retail_period_refunds, retail_period_returns_count): (i64, i64) = conn.query_row(
             &format!(
                 "SELECT COALESCE(SUM(total_refund_amount_paisa), 0), COUNT(*)
                  FROM return_vouchers
@@ -6724,8 +6738,25 @@ impl DatabaseManager {
             |r| Ok((r.get(0)?, r.get(1)?))
         ).unwrap_or((0, 0));
 
-        // Returns & refunds MTD
-        let (mtd_refunds, mtd_returns_count): (i64, i64) = conn.query_row(
+        let (online_period_refunds, online_period_returns_count): (i64, i64) = conn.query_row(
+            &format!(
+                "SELECT 
+                    COALESCE(SUM(CASE WHEN deduction_amount_paisa > 0 THEN MAX(0, total_amount_paisa - deduction_amount_paisa) ELSE total_amount_paisa END), 0),
+                    COUNT(*)
+                 FROM online_orders
+                 WHERE (payment_status = 'RETURNED' OR delivery_status = 'RETURNED_RTO' OR delivery_status = 'RETURNED')
+                   AND {};",
+                onl_ret_cond
+            ),
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?))
+        ).unwrap_or((0, 0));
+
+        let period_refunds = retail_period_refunds + online_period_refunds;
+        let period_returns_count = retail_period_returns_count + online_period_returns_count;
+
+        // Returns & refunds MTD (Retail + Online)
+        let (retail_mtd_refunds, retail_mtd_returns_count): (i64, i64) = conn.query_row(
             "SELECT COALESCE(SUM(total_refund_amount_paisa), 0), COUNT(*)
              FROM return_vouchers
              WHERE strftime('%Y-%m', return_date) = strftime('%Y-%m', 'now');",
@@ -6733,7 +6764,21 @@ impl DatabaseManager {
             |r| Ok((r.get(0)?, r.get(1)?))
         ).unwrap_or((0, 0));
 
-        // 1. Sales metrics for selected period (Retail + Wholesale): Gross, Discounts, Net, Orders
+        let (online_mtd_refunds, online_mtd_returns_count): (i64, i64) = conn.query_row(
+            "SELECT 
+                COALESCE(SUM(CASE WHEN deduction_amount_paisa > 0 THEN MAX(0, total_amount_paisa - deduction_amount_paisa) ELSE total_amount_paisa END), 0),
+                COUNT(*)
+             FROM online_orders
+             WHERE (payment_status = 'RETURNED' OR delivery_status = 'RETURNED_RTO' OR delivery_status = 'RETURNED')
+               AND (strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now') OR (collected_at IS NOT NULL AND strftime('%Y-%m', collected_at) = strftime('%Y-%m', 'now')));",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?))
+        ).unwrap_or((0, 0));
+
+        let mtd_refunds = retail_mtd_refunds + online_mtd_refunds;
+        let mtd_returns_count = retail_mtd_returns_count + online_mtd_returns_count;
+
+        // 1. Sales metrics for selected period (Retail + Wholesale + Online): Gross, Discounts, Net, Orders
         let (retail_gross, retail_discount, retail_net_raw, retail_orders, retail_discount_orders): (i64, i64, i64, i64, i64) = conn.query_row(
             &format!(
                 "SELECT 
@@ -6766,13 +6811,6 @@ impl DatabaseManager {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         ).unwrap_or((0, 0, 0, 0, 0));
 
-        let onl_cond = match period_type.as_str() {
-            "weekly" => "date(created_at) >= date('now', '-7 days')",
-            "monthly" => "strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')",
-            "yearly" => "strftime('%Y', created_at) = strftime('%Y', 'now')",
-            _ => "date(created_at) = date('now')",
-        };
-
         let (online_gross, online_discount, online_net_raw, online_orders_cnt, online_discount_orders): (i64, i64, i64, i64, i64) = conn.query_row(
             &format!(
                 "SELECT 
@@ -6782,7 +6820,7 @@ impl DatabaseManager {
                     COUNT(*),
                     COUNT(CASE WHEN discount_paisa > 0 THEN 1 END)
                  FROM online_orders
-                 WHERE payment_status != 'RETURNED' AND {};",
+                 WHERE delivery_status != 'CANCELLED' AND {};",
                 onl_cond
             ),
             [],
@@ -6795,7 +6833,7 @@ impl DatabaseManager {
         let period_orders = retail_orders + wholesale_orders + online_orders_cnt;
         let period_discount_orders = retail_discount_orders + wholesale_discount_orders + online_discount_orders;
 
-        // Net sales after customer return refunds
+        // Net sales after customer return refunds (Gross remains intact; Net = Gross - Discounts - Returns)
         let final_net_sales = (period_net_raw - period_refunds).max(0);
 
         // 2. Perfume vs Attar sales, orders count & units count for selected period (Retail + Wholesale, Net of discounts and returns)
@@ -6881,29 +6919,92 @@ impl DatabaseManager {
         let tester_clean_ret_units = (tester_ret_units - tester_damaged_ret_units).max(0);
 
         let mut onl_items_stmt = conn.prepare(&format!(
-            "SELECT items_json FROM online_orders WHERE payment_status != 'RETURNED' AND {};",
+            "SELECT items_json, payment_status, delivery_status FROM online_orders WHERE delivery_status != 'CANCELLED' AND {};",
             onl_cond
         )).ok();
 
         let mut online_perfume_sales = 0i64;
         let mut online_attar_sales = 0i64;
+        let mut online_tester_sales = 0i64;
         let mut online_perfume_units = 0i64;
         let mut online_attar_units = 0i64;
+        let mut online_tester_units = 0i64;
+
+        let mut online_perfume_ret_refunds = 0i64;
+        let mut online_attar_ret_refunds = 0i64;
+        let mut online_tester_ret_refunds = 0i64;
+        let mut online_perfume_ret_units = 0i64;
+        let mut online_attar_ret_units = 0i64;
+        let mut online_tester_ret_units = 0i64;
+
+        #[derive(Clone)]
+        struct OnlineReturnedItemInfo {
+            product_name: String,
+            item_type: String,
+            quantity: i64,
+            line_total_paisa: i64,
+        }
+        let mut online_returned_items: Vec<OnlineReturnedItemInfo> = Vec::new();
 
         if let Some(ref mut stmt) = onl_items_stmt {
-            if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-                for json_str in rows.flatten() {
+            if let Ok(rows) = stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1).unwrap_or_default(),
+                    r.get::<_, String>(2).unwrap_or_default(),
+                ))
+            }) {
+                for (json_str, p_status, d_status) in rows.flatten() {
+                    let is_ret = p_status == "RETURNED" || d_status == "RETURNED_RTO" || d_status == "RETURNED";
                     if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
                         for it in parsed {
                             let itype = it.get("item_type").and_then(|v| v.as_str()).unwrap_or("PERFUME");
+                            let pname = it.get("product_name").and_then(|v| v.as_str()).unwrap_or("Fragrance");
                             let qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
                             let ltotal = it.get("line_total_paisa").and_then(|l| l.as_i64()).unwrap_or(0);
-                            if itype == "ATTAR" {
+
+                            let is_tester = itype == "TESTER" || pname.to_lowercase().contains("tester") || pname.to_lowercase().contains("sample");
+                            let is_attar = itype == "ATTAR" && !is_tester;
+
+                            if is_tester {
+                                online_tester_sales += ltotal;
+                                online_tester_units += qty;
+                                if is_ret {
+                                    online_tester_ret_refunds += ltotal;
+                                    online_tester_ret_units += qty;
+                                    online_returned_items.push(OnlineReturnedItemInfo {
+                                        product_name: pname.to_string(),
+                                        item_type: "TESTER".to_string(),
+                                        quantity: qty,
+                                        line_total_paisa: ltotal,
+                                    });
+                                }
+                            } else if is_attar {
                                 online_attar_sales += ltotal;
                                 online_attar_units += qty;
+                                if is_ret {
+                                    online_attar_ret_refunds += ltotal;
+                                    online_attar_ret_units += qty;
+                                    online_returned_items.push(OnlineReturnedItemInfo {
+                                        product_name: pname.to_string(),
+                                        item_type: "ATTAR".to_string(),
+                                        quantity: qty,
+                                        line_total_paisa: ltotal,
+                                    });
+                                }
                             } else {
                                 online_perfume_sales += ltotal;
                                 online_perfume_units += qty;
+                                if is_ret {
+                                    online_perfume_ret_refunds += ltotal;
+                                    online_perfume_ret_units += qty;
+                                    online_returned_items.push(OnlineReturnedItemInfo {
+                                        product_name: pname.to_string(),
+                                        item_type: "PERFUME".to_string(),
+                                        quantity: qty,
+                                        line_total_paisa: ltotal,
+                                    });
+                                }
                             }
                         }
                     }
@@ -6911,12 +7012,20 @@ impl DatabaseManager {
             }
         }
 
-        let final_perfume = (net_retail_perfume + raw_wholesale_perfume + online_perfume_sales - perfume_refunds).max(0);
-        let final_attar = (net_retail_attar + raw_wholesale_attar + online_attar_sales - attar_refunds).max(0);
+        let total_perfume_refunds = perfume_refunds + online_perfume_ret_refunds;
+        let total_attar_refunds = attar_refunds + online_attar_ret_refunds;
+        let total_tester_refunds = tester_refunds + online_tester_ret_refunds;
+
+        let total_perfume_ret_units = perfume_ret_units + online_perfume_ret_units;
+        let total_attar_ret_units = attar_ret_units + online_attar_ret_units;
+        let total_tester_ret_units = tester_ret_units + online_tester_ret_units;
+
+        let final_perfume = (net_retail_perfume + raw_wholesale_perfume + online_perfume_sales - total_perfume_refunds).max(0);
+        let final_attar = (net_retail_attar + raw_wholesale_attar + online_attar_sales - total_attar_refunds).max(0);
         let final_perfume_orders = retail_perfume_orders + wholesale_perfume_orders;
         let final_attar_orders = retail_attar_orders + wholesale_attar_orders;
-        let final_perfume_units = (retail_perfume_units + wholesale_perfume_units + online_perfume_units - perfume_clean_ret_units).max(0);
-        let final_attar_units = (retail_attar_units + wholesale_attar_units + online_attar_units - attar_clean_ret_units).max(0);
+        let final_perfume_units = (retail_perfume_units + wholesale_perfume_units + online_perfume_units - (perfume_clean_ret_units + online_perfume_ret_units)).max(0);
+        let final_attar_units = (retail_attar_units + wholesale_attar_units + online_attar_units - (attar_clean_ret_units + online_attar_ret_units)).max(0);
 
         // Tester dispense telemetry for selected period ("oil jaisa dashboard main attar , perfume k sath tester k record b hon")
         let (tester_samples, tester_ml, tester_sales, tester_orders): (i64, i64, i64, i64) = conn.query_row(
@@ -6935,8 +7044,8 @@ impl DatabaseManager {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
         ).unwrap_or((0, 0, 0, 0));
 
-        let final_tester_sales = (tester_sales - tester_refunds).max(0);
-        let final_tester_units = (tester_samples - tester_clean_ret_units).max(0);
+        let final_tester_sales = (tester_sales + online_tester_sales - total_tester_refunds).max(0);
+        let final_tester_units = (tester_samples + online_tester_units - (tester_clean_ret_units + online_tester_ret_units)).max(0);
 
         // Category gross revenue breakdown (Retail + Wholesale before discounts)
         let (ret_perfume_gross, ret_attar_gross, ret_tester_gross): (i64, i64, i64) = conn.query_row(
@@ -6970,7 +7079,7 @@ impl DatabaseManager {
 
         let final_perfume_gross_paisa = ret_perfume_gross + ws_perfume_gross + online_perfume_sales;
         let final_attar_gross_paisa = ret_attar_gross + ws_attar_gross + online_attar_sales;
-        let final_tester_gross_paisa = ret_tester_gross;
+        let final_tester_gross_paisa = ret_tester_gross + online_tester_sales;
 
         // Category discount breakdown (Retail + Wholesale)
         let (ret_perfume_disc, ret_perfume_disc_u, ret_attar_disc, ret_attar_disc_u, ret_tester_disc, ret_tester_disc_u): (i64, i64, i64, i64, i64, i64) = conn.query_row(
@@ -7316,23 +7425,45 @@ impl DatabaseManager {
         ).unwrap_or(0);
 
         // Deduct customer return refunds per channel (Cash from Cash, EasyPaisa from EasyPaisa, JazzCash from JazzCash)
-        let cash_refunds_paisa: i64 = conn.query_row(
+        let retail_cash_refunds_paisa: i64 = conn.query_row(
             &format!("SELECT COALESCE(SUM(total_refund_amount_paisa), 0) FROM return_vouchers WHERE UPPER(refund_settlement_method) = 'CASH' AND {};", ret_cond_no_alias),
             [],
             |r| r.get(0)
         ).unwrap_or(0);
 
-        let easypaisa_refunds_paisa: i64 = conn.query_row(
+        let retail_ep_refunds_paisa: i64 = conn.query_row(
             &format!("SELECT COALESCE(SUM(total_refund_amount_paisa), 0) FROM return_vouchers WHERE (UPPER(refund_settlement_method) LIKE '%EASYPAISA%' OR UPPER(refund_settlement_method) LIKE '%EASY_PAISA%') AND {};", ret_cond_no_alias),
             [],
             |r| r.get(0)
         ).unwrap_or(0);
 
-        let jazzcash_refunds_paisa: i64 = conn.query_row(
+        let retail_jc_refunds_paisa: i64 = conn.query_row(
             &format!("SELECT COALESCE(SUM(total_refund_amount_paisa), 0) FROM return_vouchers WHERE (UPPER(refund_settlement_method) LIKE '%JAZZCASH%' OR UPPER(refund_settlement_method) LIKE '%JAZZ_CASH%') AND {};", ret_cond_no_alias),
             [],
             |r| r.get(0)
         ).unwrap_or(0);
+
+        let onl_cash_refunds_paisa: i64 = conn.query_row(
+            &format!("SELECT COALESCE(SUM(refund_amount_paisa), 0) FROM online_orders WHERE refund_amount_paisa > 0 AND UPPER(COALESCE(refund_settlement_method, 'CASH')) = 'CASH' AND {};", onl_ret_cond),
+            [],
+            |r| r.get(0)
+        ).unwrap_or(0);
+
+        let onl_ep_refunds_paisa: i64 = conn.query_row(
+            &format!("SELECT COALESCE(SUM(refund_amount_paisa), 0) FROM online_orders WHERE refund_amount_paisa > 0 AND (UPPER(COALESCE(refund_settlement_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(refund_settlement_method, '')) LIKE '%EASY_PAISA%') AND {};", onl_ret_cond),
+            [],
+            |r| r.get(0)
+        ).unwrap_or(0);
+
+        let onl_jc_refunds_paisa: i64 = conn.query_row(
+            &format!("SELECT COALESCE(SUM(refund_amount_paisa), 0) FROM online_orders WHERE refund_amount_paisa > 0 AND (UPPER(COALESCE(refund_settlement_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(refund_settlement_method, '')) LIKE '%JAZZ_CASH%') AND {};", onl_ret_cond),
+            [],
+            |r| r.get(0)
+        ).unwrap_or(0);
+
+        let cash_refunds_paisa = retail_cash_refunds_paisa + onl_cash_refunds_paisa;
+        let easypaisa_refunds_paisa = retail_ep_refunds_paisa + onl_ep_refunds_paisa;
+        let jazzcash_refunds_paisa = retail_jc_refunds_paisa + onl_jc_refunds_paisa;
 
         // Deduct employee salary payouts per payout channel (EasyPaisa from EasyPaisa, JazzCash from JazzCash, Cash from Cash)
         let cash_salaries_paisa: i64 = conn.query_row(
@@ -7788,6 +7919,32 @@ impl DatabaseManager {
             }
         }
 
+        // Merge online returned items into most_returned_products audit table
+        for onl_ret in online_returned_items {
+            if let Some(existing) = most_returned_products.iter_mut().find(|p| p.product_name.eq_ignore_ascii_case(&onl_ret.product_name)) {
+                existing.total_units_returned += onl_ret.quantity;
+                existing.restocked_units += onl_ret.quantity;
+                existing.total_refund_paisa += onl_ret.line_total_paisa;
+                if let Some(ref mut c) = existing.return_vouchers_count {
+                    *c += 1;
+                } else {
+                    existing.return_vouchers_count = Some(1);
+                }
+            } else {
+                most_returned_products.push(MostReturnedProductDto {
+                    product_name: onl_ret.product_name,
+                    item_type: onl_ret.item_type,
+                    total_units_returned: onl_ret.quantity,
+                    damaged_units: 0,
+                    restocked_units: onl_ret.quantity,
+                    total_refund_paisa: onl_ret.line_total_paisa,
+                    return_vouchers_count: Some(1),
+                });
+            }
+        }
+        most_returned_products.sort_by(|a, b| b.total_units_returned.cmp(&a.total_units_returned).then_with(|| b.total_refund_paisa.cmp(&a.total_refund_paisa)));
+        most_returned_products.truncate(10);
+
         Ok(ExecutiveDashboardDto {
             today_gross_sales_paisa: period_gross,
             today_net_sales_paisa: final_net_sales,
@@ -7796,12 +7953,12 @@ impl DatabaseManager {
             today_orders_count: period_orders,
             today_refunds_paisa: period_refunds,
             today_returns_count: period_returns_count,
-            today_perfume_ret_units: perfume_ret_units,
-            today_attar_ret_units: attar_ret_units,
-            today_tester_ret_units: tester_ret_units,
-            today_perfume_refunds_paisa: perfume_refunds,
-            today_attar_refunds_paisa: attar_refunds,
-            today_tester_refunds_paisa: tester_refunds,
+            today_perfume_ret_units: total_perfume_ret_units,
+            today_attar_ret_units: total_attar_ret_units,
+            today_tester_ret_units: total_tester_ret_units,
+            today_perfume_refunds_paisa: total_perfume_refunds,
+            today_attar_refunds_paisa: total_attar_refunds,
+            today_tester_refunds_paisa: total_tester_refunds,
             total_online_pending_paisa,
             online_pending_orders_count,
             total_online_collected_paisa,
@@ -9168,6 +9325,7 @@ impl DatabaseManager {
                 payment_status = 'RETURNED',
                 payment_custodian = 'RETURNED',
                 cod_balance_paisa = 0,
+                collected_at = datetime('now', 'localtime'),
                 return_reason = ?,
                 refund_amount_paisa = ?,
                 deduction_amount_paisa = ?,

@@ -50,6 +50,7 @@ import {
   Briefcase,
   Clock,
   Globe,
+  RotateCcw,
 } from "lucide-react";
 
 interface ReportsProps {
@@ -242,13 +243,12 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
   const totalWholesaleUnits = filteredWholesaleInvoices.length;
 
   // Online Orders Metrics:
-  const totalOnlineBilledPaisa = filteredOnlineOrders.reduce((acc, o) => acc + (o.payment_status !== "RETURNED" ? o.total_amount_paisa : 0), 0);
+  const totalOnlineBilledPaisa = filteredOnlineOrders.reduce((acc, o) => acc + o.total_amount_paisa, 0);
   const totalOnlineCollectedPaisa = filteredOnlineOrders.reduce((acc, o) => acc + (o.payment_status !== "RETURNED" ? o.advance_paid_paisa : 0), 0);
   const totalOnlinePendingCodPaisa = filteredOnlineOrders.reduce((acc, o) => acc + (o.payment_status !== "RETURNED" ? o.cod_balance_paisa : 0), 0);
   const totalOnlineDiscountsPaisa = filteredOnlineOrders.reduce((acc, o) => acc + (o.discount_paisa || 0), 0);
   const totalOnlineDiscountedOrdersCount = filteredOnlineOrders.filter((o) => (o.discount_paisa || 0) > 0).length;
   const totalOnlineUnits = filteredOnlineOrders.reduce((acc, o) => {
-    if (o.payment_status === "RETURNED") return acc;
     try {
       const its = JSON.parse(o.items_json);
       return acc + its.reduce((sub: number, it: any) => sub + (it.quantity || 1), 0);
@@ -256,6 +256,48 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
       return acc + 1;
     }
   }, 0);
+
+  // Online Returns & RTOs:
+  const returnedOnlineOrders = filteredOnlineOrders.filter(
+    (o) => o.payment_status === "RETURNED" || o.delivery_status === "RETURNED_RTO"
+  );
+  const totalOnlineReturnsPaisa = returnedOnlineOrders.reduce((acc, o) => {
+    const deduct = o.deduction_amount_paisa || 0;
+    return acc + Math.max(0, o.total_amount_paisa - deduct);
+  }, 0);
+  const totalOnlineReturnsCount = returnedOnlineOrders.length;
+
+  // Retail Returns:
+  const returnedSalesInvoices = filteredSales.filter(
+    (s) => s.is_returned || s.return_status === "FULL" || s.return_status === "PARTIAL" || ((s.returned_units || 0) > 0)
+  );
+  const totalRetailReturnsPaisa = returnedSalesInvoices.reduce((acc, s) => {
+    const retUnits = s.returned_units || 0;
+    if (s.return_status === "FULL" || (s.total_units > 0 && retUnits >= s.total_units)) {
+      return acc + s.net_payable_paisa;
+    }
+    if (s.total_units > 0 && retUnits > 0) {
+      return acc + Math.round((s.net_payable_paisa * retUnits) / s.total_units);
+    }
+    return acc + s.net_payable_paisa;
+  }, 0);
+  const totalRetailReturnsCount = returnedSalesInvoices.length;
+
+  let displayReturnsPaisa = 0;
+  let displayReturnsCount = 0;
+  if (channelFilter === "POS") {
+    displayReturnsPaisa = totalRetailReturnsPaisa;
+    displayReturnsCount = totalRetailReturnsCount;
+  } else if (channelFilter === "ONLINE") {
+    displayReturnsPaisa = totalOnlineReturnsPaisa;
+    displayReturnsCount = totalOnlineReturnsCount;
+  } else if (channelFilter === "WHOLESALE") {
+    displayReturnsPaisa = 0;
+    displayReturnsCount = 0;
+  } else {
+    displayReturnsPaisa = totalRetailReturnsPaisa + totalOnlineReturnsPaisa;
+    displayReturnsCount = totalRetailReturnsCount + totalOnlineReturnsCount;
+  }
 
   // Channel-Filtered Metrics for Header KPIs
   let displayRealizedRevenuePaisa = 0;
@@ -621,6 +663,11 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #15803d; margin-top: 1px;">Rs. ${formatRs(displayRealizedRevenuePaisa)}</div>
             <div style="font-size: 7.5px; color: #64748b;">Collected Funds</div>
           </div>
+          <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 6px 8px;">
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #991b1b;">Customer Returns & RTO</div>
+            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #b91c1c; margin-top: 1px;">-Rs. ${formatRs(displayReturnsPaisa)}</div>
+            <div style="font-size: 7.5px; color: #991b1b;">${displayReturnsCount} Returns Recorded</div>
+          </div>
           <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 6px 8px;">
             <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #b45309;">Wholesale Credit (Udar)</div>
             <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #d97706; margin-top: 1px;">Rs. ${formatRs(totalPendingUdarToDisplay)}</div>
@@ -641,15 +688,10 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #9333ea; margin-top: 1px;">${displayUnitsSold} Units</div>
             <div style="font-size: 7.5px; color: #7e22ce;">Channel Volume</div>
           </div>
-          <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 6px 8px;">
-            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #991b1b;">Shop Petty Expenses</div>
-            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #dc2626; margin-top: 1px;">Rs. ${formatRs(totalExpensesPaisa)}</div>
-            <div style="font-size: 7.5px; color: #991b1b;">${filteredExpenses.length} Vouchers</div>
-          </div>
           <div style="background: #fff7ed; border: 1px solid #ffedd5; border-radius: 6px; padding: 6px 8px;">
-            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #c2410c;">Staff Salaries Paid</div>
-            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #ea580c; margin-top: 1px;">Rs. ${formatRs(totalSalariesPaisa)}</div>
-            <div style="font-size: 7.5px; color: #c2410c;">${filteredSalaries.length} Payouts</div>
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #c2410c;">Operating Outflows (Expenses & Wages)</div>
+            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #ea580c; margin-top: 1px;">Rs. ${formatRs(totalExpensesPaisa + totalSalariesPaisa)}</div>
+            <div style="font-size: 7.5px; color: #c2410c;">Petty: Rs. ${formatRs(totalExpensesPaisa)} | Salaries: Rs. ${formatRs(totalSalariesPaisa)}</div>
           </div>
           <div style="background: ${netEstimatedMarginPaisa >= 0 ? "#f0fdf4" : "#fef2f2"}; border: 1px solid ${netEstimatedMarginPaisa >= 0 ? "#bbf7d0" : "#fecaca"}; border-radius: 6px; padding: 6px 8px;">
             <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: ${netEstimatedMarginPaisa >= 0 ? "#166534" : "#991b1b"};">Net Operating Margin</div>
@@ -720,11 +762,25 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </tbody>
           <tfoot>
             <tr style="background: #ecfeff; font-size: 9.5px; font-weight: 800; border-top: 1.5px solid #0891b2;">
-              <td colspan="6" style="padding: 5px 4px; text-align: right; text-transform: uppercase;">Total Online Billed:</td>
+              <td colspan="6" style="padding: 5px 4px; text-align: right; text-transform: uppercase;">Total Online Gross Billed:</td>
               <td style="padding: 5px 4px; text-align: center; font-family: monospace;">${totalOnlineUnits}</td>
               <td style="padding: 5px 4px; text-align: right; font-family: monospace; color: #0891b2;">Rs. ${formatRs(totalOnlineBilledPaisa)}</td>
               <td></td>
             </tr>
+            ${totalOnlineReturnsCount > 0 ? `
+            <tr style="background: #fef2f2; font-size: 9px; font-weight: 800; color: #991b1b; border-top: 1px dashed #fca5a5;">
+              <td colspan="6" style="padding: 4px; text-align: right; text-transform: uppercase;">Online Returns & RTOs (${totalOnlineReturnsCount} orders):</td>
+              <td style="padding: 4px; text-align: center;">-</td>
+              <td style="padding: 4px; text-align: right; font-family: monospace; color: #b91c1c;">-Rs. ${formatRs(totalOnlineReturnsPaisa)}</td>
+              <td style="padding: 4px; text-align: center; font-size: 8px;">Deducted from Net</td>
+            </tr>
+            <tr style="background: #f0fdf4; font-size: 9.5px; font-weight: 900; color: #166534; border-top: 1px solid #86efac;">
+              <td colspan="6" style="padding: 5px 4px; text-align: right; text-transform: uppercase;">Net Realized Online Sales:</td>
+              <td style="padding: 5px 4px; text-align: center;">-</td>
+              <td style="padding: 5px 4px; text-align: right; font-family: monospace; color: #15803d;">Rs. ${formatRs(Math.max(0, totalOnlineBilledPaisa - totalOnlineReturnsPaisa))}</td>
+              <td></td>
+            </tr>
+            ` : ""}
           </tfoot>
         </table>
         ` : ""}
@@ -1553,6 +1609,20 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </span>
         </div>
 
+        {/* Card: Customer Returns & Parcel RTO */}
+        <div className="bg-rose-500/5 dark:bg-rose-950/20 border border-rose-500/30 p-3.5 rounded-xl shadow-xs">
+          <div className="flex items-center justify-between text-xs text-rose-700 dark:text-rose-400 uppercase font-mono font-bold">
+            <span>Customer Returns & RTO</span>
+            <RotateCcw className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+          </div>
+          <span className="text-lg sm:text-xl font-bold font-mono text-rose-600 dark:text-rose-400 mt-1 block">
+            -Rs. {formatRs(displayReturnsPaisa)}
+          </span>
+          <span className="text-[10px] text-rose-700/80 dark:text-rose-400/80 font-mono mt-0.5 block truncate" title={`Retail: ${totalRetailReturnsCount} • Online: ${totalOnlineReturnsCount}`}>
+            {displayReturnsCount} Returns recorded ({channelFilter === "ALL" ? `Retail: ${totalRetailReturnsCount} | Online: ${totalOnlineReturnsCount}` : `${channelFilter} channel`})
+          </span>
+        </div>
+
         {/* Card 2: Wholesale Credit (Udar / Pending Receivables) */}
         <div className="bg-amber-500/5 dark:bg-amber-950/20 border border-amber-500/30 p-3.5 rounded-xl shadow-xs">
           <div className="flex items-center justify-between text-xs text-amber-700 dark:text-amber-400 uppercase font-mono font-bold">
@@ -2055,7 +2125,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
                       Rs. {formatRs(ord.advance_paid_paisa)}
                     </td>
                     <td className="py-2 px-3 text-right font-mono font-bold text-amber-600 dark:text-amber-400">
-                      {ord.cod_balance_paisa > 0 && ord.payment_status !== "RETURNED" ? (
+                      {ord.cod_balance_paisa > 0 && ord.payment_status !== "RETURNED" && ord.delivery_status !== "RETURNED_RTO" ? (
                         <span>Rs. {formatRs(ord.cod_balance_paisa)}</span>
                       ) : (
                         <span className="text-slate-400 font-normal">Rs. 0</span>
@@ -2067,12 +2137,19 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
                           ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
                           : ord.payment_status === "PARTIAL"
                           ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
-                          : ord.payment_status === "RETURNED"
+                          : ord.payment_status === "RETURNED" || ord.delivery_status === "RETURNED_RTO"
                           ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30"
-                          : "bg-slate-500/15 text-slate-600 dark:text-slate-400 border border-slate-500/30"
+                          : "bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30"
                       }`}>
-                        {ord.payment_status}
+                        {ord.payment_status === "RETURNED" || ord.delivery_status === "RETURNED_RTO"
+                          ? "RETURNED (RTO)"
+                          : ord.payment_status}
                       </span>
+                      {ord.refund_amount_paisa && ord.refund_amount_paisa > 0 ? (
+                        <div className="text-[9px] font-mono text-rose-600 font-bold mt-0.5">
+                          ↩ Ref: Rs. {formatRs(ord.refund_amount_paisa)}
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

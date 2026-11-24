@@ -252,7 +252,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                   -Rs. {formatPaisa(dashboard.today_refunds_paisa ?? 0)}
                 </div>
                 <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 flex flex-col gap-0.5 font-mono">
-                  <span>{dashboard.today_returns_count ?? 0} return vouchers</span>
+                  <span>{dashboard.today_returns_count ?? 0} returns recorded (POS & Online)</span>
                   <span className="text-slate-400">Deducted from sales</span>
                 </div>
                 <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800/60 flex flex-col gap-1 text-[10px] font-mono">
@@ -1130,7 +1130,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                         <div>{ret.total_units_returned} {ret.total_units_returned === 1 ? "unit" : "units"}</div>
                         {ret.return_vouchers_count && ret.return_vouchers_count > 1 ? (
                           <span className="text-[10px] font-normal font-sans text-slate-500 dark:text-slate-400 block">
-                            (across {ret.return_vouchers_count} vouchers)
+                            (across {ret.return_vouchers_count} returns)
                           </span>
                         ) : null}
                       </td>

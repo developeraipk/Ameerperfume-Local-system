@@ -459,6 +459,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       setIsNewOrderModalOpen(false);
       resetNewOrderForm();
       await loadData();
+      window.dispatchEvent(new CustomEvent("app:refresh-data"));
     } catch (err: any) {
       console.error("Failed to create online order:", err);
       setFeedback({
@@ -522,6 +523,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       setIsCollectModalOpen(false);
       setSelectedOrder(null);
       await loadData();
+      window.dispatchEvent(new CustomEvent("app:refresh-data"));
     } catch (err: any) {
       console.error("Failed to collect online payment:", err);
       setFeedback({
@@ -596,6 +598,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       setIsReturnModalOpen(false);
       setSelectedOrder(null);
       await loadData();
+      window.dispatchEvent(new CustomEvent("app:refresh-data"));
     } catch (err: any) {
       console.error("Failed to mark order return:", err);
       setFeedback({
@@ -635,6 +638,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       setIsStatusModalOpen(false);
       setSelectedOrder(null);
       await loadData();
+      window.dispatchEvent(new CustomEvent("app:refresh-data"));
     } catch (err: any) {
       console.error("Failed to update status:", err);
       setFeedback({

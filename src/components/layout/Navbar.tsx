@@ -736,17 +736,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
               title="Click to view user profile, Lock [F10], Logout, or Reset DB"
             >
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-600 via-amber-500 to-amber-300 text-slate-950 font-black text-xs flex items-center justify-center shadow-xs select-none shrink-0">
-                {currentUser.full_name
-                  .replace(/\s*\([^)]*\)/g, "")
-                  .split(" ")
-                  .filter(Boolean)
-                  .map((n) => n[0])
-                  .slice(0, 2)
-                  .join("")
-                  .toUpperCase() || "MA"}
-              </div>
-              <div className="text-left shrink-0 max-w-[110px] hidden sm:block">
+              <div className="text-left shrink-0 max-w-[140px] block">
                 {renderFormattedName(currentUser.full_name)}
                 <div className="text-[9px] mt-0.5">
                   <Badge variant={getRoleBadgeVariant(currentUser.role)} className="py-0 px-1 text-[8.5px] font-semibold leading-tight">

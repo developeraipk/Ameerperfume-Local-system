@@ -125,6 +125,8 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const [returnItemSelections, setReturnItemSelections] = useState<{
     originalIndex: number;
     name: string;
+    totalOrderedQty?: number;
+    alreadyReturnedQty?: number;
     maxQty: number;
     returnQty: number;
     selected: boolean;
@@ -208,22 +210,21 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   );
   const totalPendingPaisa = waPendingPaisa + webPendingPaisa;
 
-  // Realized Net Cash Collected (Advance paid minus refunds, excluding returned orders unless shop retained deduction)
-  const waCollectedPaisa = waOrders.reduce((sum, o) => {
-    const isReturned = o.payment_status === "RETURNED" || (o.delivery_status as string) === "RETURNED_RTO" || (o.delivery_status as string) === "RETURNED";
-    if (isReturned) {
-      return sum + Math.max(0, o.deduction_amount_paisa || 0);
+  // Realized Net Cash Collected (Total actual cash/payments collected minus all refunds)
+  const calcOrderRealizedPaisa = (o: OnlineOrder): number => {
+    const advancePaid = o.advance_paid_paisa || 0;
+    const refunded = o.refund_amount_paisa || 0;
+    const net = advancePaid - refunded;
+    if (net > 0) return net;
+    // If order was returned RTO but shop retained a deduction fee
+    if ((o.payment_status === "RETURNED" || o.delivery_status === "RETURNED_RTO") && (o.deduction_amount_paisa || 0) > 0) {
+      return o.deduction_amount_paisa || 0;
     }
-    return sum + Math.max(0, o.advance_paid_paisa - (o.refund_amount_paisa || 0));
-  }, 0);
+    return 0;
+  };
 
-  const webCollectedPaisa = webOrders.reduce((sum, o) => {
-    const isReturned = o.payment_status === "RETURNED" || (o.delivery_status as string) === "RETURNED_RTO" || (o.delivery_status as string) === "RETURNED";
-    if (isReturned) {
-      return sum + Math.max(0, o.deduction_amount_paisa || 0);
-    }
-    return sum + Math.max(0, o.advance_paid_paisa - (o.refund_amount_paisa || 0));
-  }, 0);
+  const waCollectedPaisa = waOrders.reduce((sum, o) => sum + calcOrderRealizedPaisa(o), 0);
+  const webCollectedPaisa = webOrders.reduce((sum, o) => sum + calcOrderRealizedPaisa(o), 0);
   const totalCollectedPaisa = waCollectedPaisa + webCollectedPaisa;
 
   // Custodian split of pending money
@@ -580,18 +581,26 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       parsed = [];
     }
 
-    const selections = parsed.map((it, idx) => ({
-      originalIndex: idx,
-      name: it.name || it.product_name || "Fragrance Item",
-      maxQty: it.quantity || 1,
-      returnQty: it.quantity || 1,
-      selected: true,
-      unitPricePaisa: it.unit_price_paisa || Math.round((it.line_total_paisa || 0) / (it.quantity || 1)),
-      rawItem: it,
-    }));
+    const selections = parsed.map((it, idx) => {
+      const alreadyReturned = it.returned_quantity || 0;
+      const totalOrdered = it.quantity || 1;
+      const availableQty = Math.max(0, totalOrdered - alreadyReturned);
+      return {
+        originalIndex: idx,
+        name: it.name || it.product_name || "Fragrance Item",
+        totalOrderedQty: totalOrdered,
+        alreadyReturnedQty: alreadyReturned,
+        maxQty: availableQty,
+        returnQty: availableQty > 0 ? availableQty : 0,
+        selected: availableQty > 0,
+        unitPricePaisa: it.unit_price_paisa || Math.round((it.line_total_paisa || 0) / (it.quantity || 1)),
+        rawItem: it,
+      };
+    });
     setReturnItemSelections(selections);
 
-    if (order.advance_paid_paisa > 0) {
+    const netPaidSoFar = Math.max(0, (order.advance_paid_paisa || 0) - (order.refund_amount_paisa || 0));
+    if (netPaidSoFar > 0) {
       setRefundMode("FULL");
       setRefundDeductionRupees("0");
       setRefundPaymentMethod(order.collection_method || order.refund_settlement_method || "CASH");
@@ -615,101 +624,99 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       return;
     }
 
-    const isAllReturned =
-      selectedReturns.length === returnItemSelections.length &&
-      selectedReturns.every((it) => it.returnQty === it.maxQty);
+    // Determine if all remaining unreturned units are being returned
+    const isAllReturned = returnItemSelections.every((it) => {
+      if (it.maxQty === 0) return true; // already returned previously
+      return it.selected && it.returnQty === it.maxQty;
+    });
 
-    const advancePaisa = selectedOrder.advance_paid_paisa;
+    const netPaidSoFar = Math.max(0, (selectedOrder.advance_paid_paisa || 0) - (selectedOrder.refund_amount_paisa || 0));
+    const returnedItemsValuePaisa = selectedReturns.reduce((sum, s) => sum + s.returnQty * s.unitPricePaisa, 0);
+    const maxRefundPossible = Math.min(netPaidSoFar, returnedItemsValuePaisa);
+
     let refundPaisa = 0;
     let deductionPaisa = 0;
 
-    if (advancePaisa > 0) {
+    if (netPaidSoFar > 0) {
       if (refundMode === "FULL") {
-        refundPaisa = advancePaisa;
+        refundPaisa = maxRefundPossible;
         deductionPaisa = 0;
       } else if (refundMode === "PARTIAL") {
         const deductionInputPaisa = Math.max(0, Math.round((parseFloat(refundDeductionRupees) || 0) * 100));
-        deductionPaisa = Math.min(advancePaisa, deductionInputPaisa);
-        refundPaisa = Math.max(0, advancePaisa - deductionPaisa);
+        deductionPaisa = Math.min(maxRefundPossible, deductionInputPaisa);
+        refundPaisa = Math.max(0, maxRefundPossible - deductionPaisa);
       } else {
         // NONE (100% advance retained)
         refundPaisa = 0;
-        deductionPaisa = advancePaisa;
+        deductionPaisa = maxRefundPossible;
       }
     }
 
     try {
       setLoading(true);
 
-      if (!isAllReturned) {
-        // Partial return: prepare returned items, remaining items, and new totals
-        const returnedItems = selectedReturns.map((s) => ({
+      // Create updated items array preserving ALL items and tracking returned quantities
+      const updatedAllItems = returnItemSelections.map((s) => {
+        const newlyReturned = s.selected ? s.returnQty : 0;
+        const totalReturned = (s.rawItem.returned_quantity || 0) + newlyReturned;
+        const totalOrdered = s.rawItem.quantity || 1;
+        return {
           ...s.rawItem,
-          quantity: s.returnQty,
-          line_total_paisa: s.returnQty * s.unitPricePaisa,
-        }));
-
-        const remainingItems = returnItemSelections
-          .map((s) => {
-            const returnedCount = s.selected ? s.returnQty : 0;
-            const remainingQty = s.maxQty - returnedCount;
-            if (remainingQty <= 0) return null;
-            return {
-              ...s.rawItem,
-              quantity: remainingQty,
-              line_total_paisa: remainingQty * s.unitPricePaisa,
-            };
-          })
-          .filter(Boolean);
-
-        const newSubtotalPaisa = remainingItems.reduce((sum, it: any) => sum + (it.line_total_paisa || 0), 0);
-        const newTotalPaisa = Math.max(
-          0,
-          newSubtotalPaisa + selectedOrder.delivery_charges_paisa - selectedOrder.discount_paisa
-        );
-
-        const payload: MarkOnlineReturnPayload = {
-          order_id: selectedOrder.order_id,
-          return_reason: returnReason.trim(),
-          user_id: currentUser?.user_id || "usr_online_mgr",
-          refund_amount_paisa: refundPaisa,
-          deduction_amount_paisa: deductionPaisa,
-          refund_settlement_method: refundPaisa > 0 ? refundPaymentMethod : undefined,
-          returned_items_json: JSON.stringify(returnedItems),
-          remaining_items_json: JSON.stringify(remainingItems),
-          new_total_paisa: newTotalPaisa,
-          new_subtotal_paisa: newSubtotalPaisa,
-          is_partial: true,
+          returned_quantity: totalReturned,
+          return_status:
+            totalReturned >= totalOrdered
+              ? "RETURNED"
+              : totalReturned > 0
+              ? "PARTIAL_RETURN"
+              : "ACTIVE",
         };
+      });
 
-        await markOnlineOrderReturn(payload);
-        setFeedback({
-          type: "success",
-          text: `✓ Partial return recorded for ${selectedOrder.order_number}! Selected items restocked into inventory.`,
-        });
-      } else {
-        // Full return
-        const payload: MarkOnlineReturnPayload = {
-          order_id: selectedOrder.order_id,
-          return_reason: returnReason.trim(),
-          user_id: currentUser?.user_id || "usr_online_mgr",
-          refund_amount_paisa: refundPaisa,
-          deduction_amount_paisa: deductionPaisa,
-          refund_settlement_method: refundPaisa > 0 ? refundPaymentMethod : undefined,
-          is_partial: false,
-        };
+      const returnedItems = selectedReturns.map((s) => ({
+        ...s.rawItem,
+        quantity: s.returnQty,
+        line_total_paisa: s.returnQty * s.unitPricePaisa,
+      }));
 
-        await markOnlineOrderReturn(payload);
-        setFeedback({
-          type: "success",
-          text: `✓ Order ${selectedOrder.order_number} marked as Returned (RTO). Stock restocked into inventory! ${
-            refundPaisa > 0
-              ? `Rs. ${formatRs(refundPaisa)} refunded to customer (${refundPaymentMethod}).`
-              : ""
-          } ${deductionPaisa > 0 ? `Rs. ${formatRs(deductionPaisa)} retained as handling deduction.` : ""}`,
-        });
-      }
+      // Calculate new active items subtotal (only for unreturned units)
+      const activeItemsSubtotalPaisa = updatedAllItems.reduce((sum, it) => {
+        const activeUnits = Math.max(0, (it.quantity || 1) - (it.returned_quantity || 0));
+        const unitPrice = it.unit_price_paisa || Math.round((it.line_total_paisa || 0) / (it.quantity || 1));
+        return sum + activeUnits * unitPrice;
+      }, 0);
 
+      const newTotalPaisa = isAllReturned
+        ? 0
+        : Math.max(
+            0,
+            activeItemsSubtotalPaisa + selectedOrder.delivery_charges_paisa - selectedOrder.discount_paisa
+          );
+
+      const payload: MarkOnlineReturnPayload = {
+        order_id: selectedOrder.order_id,
+        return_reason: returnReason.trim(),
+        user_id: currentUser?.user_id || "usr_online_mgr",
+        refund_amount_paisa: refundPaisa,
+        deduction_amount_paisa: deductionPaisa,
+        refund_settlement_method: refundPaisa > 0 ? refundPaymentMethod : undefined,
+        returned_items_json: JSON.stringify(returnedItems),
+        remaining_items_json: JSON.stringify(updatedAllItems),
+        new_total_paisa: newTotalPaisa,
+        new_subtotal_paisa: activeItemsSubtotalPaisa,
+        is_partial: !isAllReturned,
+      };
+
+      await markOnlineOrderReturn(payload);
+      setFeedback({
+        type: "success",
+        text: isAllReturned
+          ? `✓ Order ${selectedOrder.order_number} marked as Full Return (RTO). Restocked into inventory! ${
+              refundPaisa > 0 ? `Rs. ${formatRs(refundPaisa)} refunded to customer (${refundPaymentMethod}).` : ""
+            } ${deductionPaisa > 0 ? `Rs. ${formatRs(deductionPaisa)} retained as handling cut.` : ""}`
+          : `✓ Partial return recorded for ${selectedOrder.order_number}! Selected items restocked; order retains active items. ${
+              refundPaisa > 0 ? `Rs. ${formatRs(refundPaisa)} refunded to customer (${refundPaymentMethod}).` : ""
+            }`,
+      });
       setIsReturnModalOpen(false);
       setSelectedOrder(null);
       await loadData();
@@ -847,12 +854,16 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
           <div style="border-top: 1px solid #000000; margin-bottom: 4px;"></div>
           ${items
             .map(
-              (it) => `
-            <div style="display: flex; justify-content: space-between; font-size: 10.5px; margin-bottom: 2px; font-family: monospace;">
-              <span style="font-weight: 700;">${it.quantity}x ${it.name}</span>
+              (it: any) => {
+                const isRet = (it.returned_quantity || 0) >= (it.quantity || 1);
+                const isPart = (it.returned_quantity || 0) > 0 && !isRet;
+                return `
+            <div style="display: flex; justify-content: space-between; font-size: 10.5px; margin-bottom: 2px; font-family: monospace; ${isRet ? "text-decoration: line-through; opacity: 0.6;" : ""}">
+              <span style="font-weight: 700;">${it.quantity}x ${it.name} ${isRet ? "(RETURNED)" : isPart ? `(${it.returned_quantity} ret)` : ""}</span>
               <span style="font-weight: 900;">Rs. ${(it.line_total_paisa / 100).toLocaleString()}</span>
             </div>
-          `
+          `;
+              }
             )
             .join("")}
 
@@ -979,15 +990,19 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
             <tbody>
               ${items
                 .map(
-                  (it) => `
-                <tr style="border-bottom: 1px solid #e2e8f0;">
-                  <td style="padding: 10px; font-weight: 600;">${it.name}</td>
+                  (it: any) => {
+                    const isRet = (it.returned_quantity || 0) >= (it.quantity || 1);
+                    const isPart = (it.returned_quantity || 0) > 0 && !isRet;
+                    return `
+                <tr style="border-bottom: 1px solid #e2e8f0; ${isRet ? "text-decoration: line-through; opacity: 0.6; background: #fff1f2;" : ""}">
+                  <td style="padding: 10px; font-weight: 600;">${it.name} ${isRet ? '<span style="color: #e11d48; font-size: 10px; font-weight: bold; margin-left: 6px;">[RETURNED]</span>' : isPart ? `<span style="color: #d97706; font-size: 10px; font-weight: bold; margin-left: 6px;">[${it.returned_quantity} RETURNED]</span>` : ""}</td>
                   <td style="padding: 10px; text-align: center;">${it.item_type}</td>
                   <td style="padding: 10px; text-align: center; font-weight: 700;">${it.quantity}</td>
                   <td style="padding: 10px; text-align: right;">Rs. ${(it.unit_price_paisa / 100).toLocaleString()}</td>
                   <td style="padding: 10px; text-align: right; font-weight: 700;">Rs. ${(it.line_total_paisa / 100).toLocaleString()}</td>
                 </tr>
-              `
+              `;
+                  }
                 )
                 .join("")}
             </tbody>
@@ -1390,6 +1405,43 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                   <div className="text-[10px] text-slate-500 truncate max-w-[180px]" title={o.shipping_address}>
                     {o.city} • {o.shipping_address}
                   </div>
+                  {/* Order Items Badges (Preserving and displaying all products & returned units) */}
+                  {(() => {
+                    let items: any[] = [];
+                    try {
+                      items = JSON.parse(o.items_json);
+                    } catch {
+                      items = [];
+                    }
+                    if (!items.length) return null;
+                    return (
+                      <div className="flex flex-wrap gap-1 mt-1.5 max-w-[240px]">
+                        {items.map((it: any, i: number) => {
+                          const isReturned = (it.returned_quantity || 0) >= (it.quantity || 1);
+                          const isPartial = (it.returned_quantity || 0) > 0 && !isReturned;
+                          return (
+                            <span
+                              key={i}
+                              className={`text-[9.5px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1 ${
+                                isReturned
+                                  ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 line-through border border-rose-500/20"
+                                  : isPartial
+                                  ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20"
+                                  : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                              }`}
+                              title={`${it.name || "Item"} (${it.quantity}x) ${
+                                isReturned ? "[Returned]" : isPartial ? `[${it.returned_quantity} returned]` : ""
+                              }`}
+                            >
+                              📦 {it.name || "Item"} ({it.quantity}x)
+                              {isReturned && <span className="font-bold text-rose-600 dark:text-rose-400 text-[8.5px]">↩️ RET</span>}
+                              {isPartial && <span className="font-bold text-amber-600 dark:text-amber-400 text-[8.5px]">({it.returned_quantity} ret)</span>}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </td>
 
                 {/* 4. Courier & Tracking */}
@@ -2425,180 +2477,215 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                   </span>
                 </div>
                 <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-48 overflow-y-auto p-1.5 space-y-1">
-                  {returnItemSelections.map((item, idx) => (
-                    <div
-                      key={idx}
-                      className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
-                        item.selected
-                          ? "bg-white dark:bg-slate-900 border-rose-300/60 dark:border-rose-900/40 shadow-2xs"
-                          : "bg-slate-50 dark:bg-slate-900/30 border-transparent opacity-60"
-                      }`}
-                    >
-                      <label className="flex items-center gap-2 cursor-pointer select-none flex-1">
-                        <input
-                          type="checkbox"
-                          checked={item.selected}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            setReturnItemSelections((prev) =>
-                              prev.map((it, i) => (i === idx ? { ...it, selected: checked } : it))
-                            );
-                          }}
-                          className="rounded border-slate-300 text-rose-600 focus:ring-rose-500 w-4 h-4 cursor-pointer"
-                        />
-                        <div>
-                          <div className="font-bold text-slate-800 dark:text-slate-200">
-                            {item.name}
-                          </div>
-                          <div className="text-[10px] text-slate-500 font-mono">
-                            Purchased: {item.maxQty} units • Unit: Rs. {formatRs(item.unitPricePaisa)}
-                          </div>
-                        </div>
-                      </label>
-
-                      {item.selected && (
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[10px] text-slate-500">Qty:</span>
+                  {returnItemSelections.map((item, idx) => {
+                    const isAlreadyFullyReturned = item.maxQty === 0;
+                    return (
+                      <div
+                        key={idx}
+                        className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                          isAlreadyFullyReturned
+                            ? "bg-slate-100/50 dark:bg-slate-900/30 border-slate-200/50 dark:border-slate-800/50 opacity-60"
+                            : item.selected
+                            ? "bg-white dark:bg-slate-900 border-rose-300/60 dark:border-rose-900/40 shadow-2xs"
+                            : "bg-slate-50 dark:bg-slate-900/30 border-transparent opacity-60"
+                        }`}
+                      >
+                        <label className="flex items-center gap-2 cursor-pointer select-none flex-1">
                           <input
-                            type="number"
-                            min="1"
-                            max={item.maxQty}
-                            value={item.returnQty}
+                            type="checkbox"
+                            checked={item.selected && !isAlreadyFullyReturned}
+                            disabled={isAlreadyFullyReturned}
                             onChange={(e) => {
-                              const val = Math.max(1, Math.min(item.maxQty, parseInt(e.target.value) || 1));
+                              const checked = e.target.checked;
                               setReturnItemSelections((prev) =>
-                                prev.map((it, i) => (i === idx ? { ...it, returnQty: val } : it))
+                                prev.map((it, i) => (i === idx ? { ...it, selected: checked } : it))
                               );
                             }}
-                            className="w-14 h-7 text-center font-mono font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs"
+                            className="rounded border-slate-300 text-rose-600 focus:ring-rose-500 w-4 h-4 cursor-pointer"
                           />
-                          <span className="text-xs font-mono font-bold text-rose-600 dark:text-rose-400 w-20 text-right">
-                            Rs. {formatRs(item.returnQty * item.unitPricePaisa)}
+                          <div>
+                            <div className={`font-bold text-slate-800 dark:text-slate-200 ${isAlreadyFullyReturned ? "line-through text-slate-400" : ""}`}>
+                              {item.name}
+                            </div>
+                            <div className="text-[10px] text-slate-500 font-mono">
+                              Ordered: {item.totalOrderedQty || item.maxQty} units
+                              {(item.alreadyReturnedQty || 0) > 0 ? ` • Already Returned: ${item.alreadyReturnedQty} units` : ""}
+                              • Unit: Rs. {formatRs(item.unitPricePaisa)}
+                            </div>
+                          </div>
+                        </label>
+
+                        {!isAlreadyFullyReturned && item.selected ? (
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[10px] text-slate-500">Return Qty:</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max={item.maxQty}
+                              value={item.returnQty}
+                              onChange={(e) => {
+                                const val = Math.max(1, Math.min(item.maxQty, parseInt(e.target.value) || 1));
+                                setReturnItemSelections((prev) =>
+                                  prev.map((it, i) => (i === idx ? { ...it, returnQty: val } : it))
+                                );
+                              }}
+                              className="w-14 h-7 text-center font-mono font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs"
+                            />
+                            <span className="text-xs font-mono font-bold text-rose-600 dark:text-rose-400 w-20 text-right">
+                              Rs. {formatRs(item.returnQty * item.unitPricePaisa)}
+                            </span>
+                          </div>
+                        ) : isAlreadyFullyReturned ? (
+                          <span className="text-[10px] font-bold text-rose-500 bg-rose-500/10 px-2 py-0.5 rounded">
+                            ↩ Already Returned
                           </span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
               {/* Advance Paid & Refund Settlement Options */}
-              {selectedOrder.advance_paid_paisa > 0 && (
-                <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3 font-sans">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-slate-800 dark:text-slate-200">
-                      Customer Paid Advance / Collected:
-                    </span>
-                    <span className="font-mono font-bold text-sm text-emerald-600 dark:text-emerald-400">
-                      Rs. {formatRs(selectedOrder.advance_paid_paisa)}
-                    </span>
-                  </div>
+              {(() => {
+                const selectedItems = returnItemSelections.filter((it) => it.selected && it.returnQty > 0);
+                const returnedValPaisa = selectedItems.reduce((sum, s) => sum + s.returnQty * s.unitPricePaisa, 0);
+                const netPaidSoFar = Math.max(0, (selectedOrder.advance_paid_paisa || 0) - (selectedOrder.refund_amount_paisa || 0));
+                const maxRefundEligible = Math.min(netPaidSoFar, returnedValPaisa);
+                const deductionInputPaisa = Math.max(0, Math.round((parseFloat(refundDeductionRupees) || 0) * 100));
+                const deductionCut = Math.min(maxRefundEligible, deductionInputPaisa);
+                const calculatedRefundPaisa =
+                  refundMode === "FULL"
+                    ? maxRefundEligible
+                    : refundMode === "PARTIAL"
+                    ? Math.max(0, maxRefundEligible - deductionCut)
+                    : 0;
 
-                  <div>
-                    <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
-                      Select Refund Settlement Option:
-                    </label>
-                    <div className="grid grid-cols-3 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRefundMode("FULL");
-                          setRefundDeductionRupees("0");
-                        }}
-                        className={`p-2 rounded-lg border text-center text-xs font-bold transition-all cursor-pointer ${
-                          refundMode === "FULL"
-                            ? "bg-emerald-500/15 border-emerald-500 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500"
-                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:border-slate-400"
-                        }`}
-                      >
-                        Full Refund
-                        <div className="text-[10px] font-normal text-slate-500">100% money back</div>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRefundMode("PARTIAL");
-                          setRefundDeductionRupees("200");
-                        }}
-                        className={`p-2 rounded-lg border text-center text-xs font-bold transition-all cursor-pointer ${
-                          refundMode === "PARTIAL"
-                            ? "bg-amber-500/15 border-amber-500 text-amber-700 dark:text-amber-300 ring-1 ring-amber-500"
-                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:border-slate-400"
-                        }`}
-                      >
-                        Partial Refund
-                        <div className="text-[10px] font-normal text-slate-500">Deduct courier/cut</div>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRefundMode("NONE");
-                          setRefundDeductionRupees((selectedOrder.advance_paid_paisa / 100).toString());
-                        }}
-                        className={`p-2 rounded-lg border text-center text-xs font-bold transition-all cursor-pointer ${
-                          refundMode === "NONE"
-                            ? "bg-rose-500/15 border-rose-500 text-rose-700 dark:text-rose-300 ring-1 ring-rose-500"
-                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:border-slate-400"
-                        }`}
-                      >
-                        No Refund
-                        <div className="text-[10px] font-normal text-slate-500">Retain full advance</div>
-                      </button>
+                if (netPaidSoFar <= 0) {
+                  return (
+                    <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-400">
+                      ℹ️ No customer advance paid / payment recorded. Returned items value (Rs. {formatRs(returnedValPaisa)}) will reduce pending COD receivable. No cash refund required.
                     </div>
-                  </div>
+                  );
+                }
 
-                  {refundMode === "PARTIAL" && (
-                    <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-lg space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-semibold text-amber-800 dark:text-amber-300">
-                          Deduction Cut (Courier/Handling PKR):
+                return (
+                  <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3 font-sans">
+                    <div className="grid grid-cols-2 gap-2 text-xs border-b border-slate-200 dark:border-slate-800/80 pb-2">
+                      <div>
+                        <span className="text-slate-500 block text-[10px]">Net Collected from Customer:</span>
+                        <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                          Rs. {formatRs(netPaidSoFar)}
                         </span>
-                        <div className="w-28">
-                          <Input
-                            type="number"
-                            min={0}
-                            max={selectedOrder.advance_paid_paisa / 100}
-                            value={refundDeductionRupees}
-                            onChange={(e) => setRefundDeductionRupees(e.target.value)}
-                            className="h-7 text-xs text-right font-mono font-bold text-rose-600"
-                          />
-                        </div>
                       </div>
-                      <div className="flex justify-between items-center text-xs font-mono font-bold pt-1 border-t border-amber-500/20">
-                        <span>Net Refund Amount to Customer:</span>
-                        <span className="text-emerald-600 dark:text-emerald-400">
-                          Rs. {formatRs(
-                            Math.max(
-                              0,
-                              selectedOrder.advance_paid_paisa -
-                                Math.round((parseFloat(refundDeductionRupees) || 0) * 100)
-                            )
-                          )}
+                      <div>
+                        <span className="text-slate-500 block text-[10px]">Value of Selected Returns:</span>
+                        <span className="font-mono font-bold text-rose-600 dark:text-rose-400">
+                          Rs. {formatRs(returnedValPaisa)}
                         </span>
                       </div>
                     </div>
-                  )}
 
-                  {refundMode !== "NONE" && (
                     <div>
                       <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
-                        Refund Settlement Channel:
+                        Select Refund Settlement Option:
                       </label>
-                      <select
-                        value={refundPaymentMethod}
-                        onChange={(e) => setRefundPaymentMethod(e.target.value)}
-                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold"
-                      >
-                        <option value="CASH">💵 Cash</option>
-                        <option value="EASYPAISA">📱 EasyPaisa</option>
-                        <option value="JAZZCASH">📱 JazzCash</option>
-                      </select>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRefundMode("FULL");
+                            setRefundDeductionRupees("0");
+                          }}
+                          className={`p-2 rounded-lg border text-center text-xs font-bold transition-all cursor-pointer ${
+                            refundMode === "FULL"
+                              ? "bg-emerald-500/15 border-emerald-500 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500"
+                              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:border-slate-400"
+                          }`}
+                        >
+                          Full Refund
+                          <div className="text-[10px] font-normal text-slate-500">Rs. {formatRs(maxRefundEligible)}</div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRefundMode("PARTIAL");
+                            setRefundDeductionRupees("200");
+                          }}
+                          className={`p-2 rounded-lg border text-center text-xs font-bold transition-all cursor-pointer ${
+                            refundMode === "PARTIAL"
+                              ? "bg-amber-500/15 border-amber-500 text-amber-700 dark:text-amber-300 ring-1 ring-amber-500"
+                              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:border-slate-400"
+                          }`}
+                        >
+                          Partial Refund
+                          <div className="text-[10px] font-normal text-slate-500">Deduct courier/cut</div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRefundMode("NONE");
+                            setRefundDeductionRupees((maxRefundEligible / 100).toString());
+                          }}
+                          className={`p-2 rounded-lg border text-center text-xs font-bold transition-all cursor-pointer ${
+                            refundMode === "NONE"
+                              ? "bg-rose-500/15 border-rose-500 text-rose-700 dark:text-rose-300 ring-1 ring-rose-500"
+                              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:border-slate-400"
+                          }`}
+                        >
+                          No Refund
+                          <div className="text-[10px] font-normal text-slate-500">Retain advance</div>
+                        </button>
+                      </div>
                     </div>
-                  )}
-                </div>
-              )}
+
+                    {refundMode === "PARTIAL" && (
+                      <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-lg space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-amber-800 dark:text-amber-300">
+                            Deduction Cut (Courier/Handling PKR):
+                          </span>
+                          <div className="w-28">
+                            <Input
+                              type="number"
+                              min={0}
+                              max={maxRefundEligible / 100}
+                              value={refundDeductionRupees}
+                              onChange={(e) => setRefundDeductionRupees(e.target.value)}
+                              className="h-7 text-xs text-right font-mono font-bold text-rose-600"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex justify-between items-center text-xs font-mono font-bold pt-1 border-t border-amber-500/20">
+                          <span>Net Refund Amount to Customer:</span>
+                          <span className="text-emerald-600 dark:text-emerald-400">
+                            Rs. {formatRs(calculatedRefundPaisa)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {refundMode !== "NONE" && calculatedRefundPaisa > 0 && (
+                      <div>
+                        <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                          Refund Settlement Channel:
+                        </label>
+                        <select
+                          value={refundPaymentMethod}
+                          onChange={(e) => setRefundPaymentMethod(e.target.value)}
+                          className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold"
+                        >
+                          <option value="CASH">💵 Cash</option>
+                          <option value="EASYPAISA">📱 EasyPaisa</option>
+                          <option value="JAZZCASH">📱 JazzCash</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div>
                 <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">

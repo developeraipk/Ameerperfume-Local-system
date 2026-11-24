@@ -1344,6 +1344,8 @@ export interface OnlineOrderItem {
   line_total_paisa: number;
   grams?: number;
   is_tester?: boolean;
+  returned_quantity?: number;
+  return_status?: string;
 }
 
 export interface OnlineOrder {

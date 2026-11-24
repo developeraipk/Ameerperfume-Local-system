@@ -839,6 +839,16 @@ impl DatabaseManager {
         let _ = conn.execute("ALTER TABLE online_orders ADD COLUMN deduction_amount_paisa INTEGER NOT NULL DEFAULT 0;", []);
         let _ = conn.execute("ALTER TABLE online_orders ADD COLUMN refund_settlement_method TEXT;", []);
 
+        let _ = conn.execute("
+            UPDATE online_orders
+            SET advance_paid_paisa = (
+                SELECT COALESCE(SUM(amount_paid_paisa), 0)
+                FROM online_order_payments
+                WHERE online_order_payments.order_id = online_orders.order_id
+            )
+            WHERE order_id IN (SELECT order_id FROM online_order_payments);
+        ", []);
+
         Ok((current_version.max(231), current_version < 231))
     }
 
@@ -7307,10 +7317,17 @@ impl DatabaseManager {
 
         // 9. Payment Settlement Breakdown (Cash, EasyPaisa, JazzCash, Direct Bank) filtered by selected period
         let onl_pay_cond = match period_type.as_str() {
-            "weekly" => "date(created_at) >= date('now', '-7 days')",
-            "monthly" => "strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')",
-            "yearly" => "strftime('%Y', created_at) = strftime('%Y', 'now')",
-            _ => "date(created_at) = date('now')",
+            "weekly" => "date(oop.created_at) >= date('now', '-7 days')",
+            "monthly" => "strftime('%Y-%m', oop.created_at) = strftime('%Y-%m', 'now')",
+            "yearly" => "strftime('%Y', oop.created_at) = strftime('%Y', 'now')",
+            _ => "(date(oop.created_at) = date('now') OR date(oop.created_at) = date('now', 'localtime'))",
+        };
+
+        let onl_cond_oo = match period_type.as_str() {
+            "weekly" => "(date(oo.created_at) >= date('now', '-7 days') OR (oo.collected_at IS NOT NULL AND date(oo.collected_at) >= date('now', '-7 days')))",
+            "monthly" => "(strftime('%Y-%m', oo.created_at) = strftime('%Y-%m', 'now') OR (oo.collected_at IS NOT NULL AND strftime('%Y-%m', oo.collected_at) = strftime('%Y-%m', 'now')))",
+            "yearly" => "(strftime('%Y', oo.created_at) = strftime('%Y', 'now') OR (oo.collected_at IS NOT NULL AND strftime('%Y', oo.collected_at) = strftime('%Y', 'now')))",
+            _ => "((date(oo.created_at) = date('now') OR date(oo.created_at) = date('now', 'localtime')) OR (oo.collected_at IS NOT NULL AND (date(oo.collected_at) = date('now') OR date(oo.collected_at) = date('now', 'localtime'))))",
         };
 
         let gross_cash_received_paisa: i64 = conn.query_row(
@@ -7325,14 +7342,13 @@ impl DatabaseManager {
                 UNION ALL
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
-                WHERE UPPER(oop.payment_method) = 'CASH' AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO' AND {}
+                WHERE UPPER(oop.payment_method) = 'CASH' AND {}
                 UNION ALL
-                SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
-                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                WHERE oo.advance_paid_paisa > 0 
                   AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH' 
-                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
-            );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
+            );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond_oo),
             [],
             |r| r.get(0)
         ).unwrap_or(0);
@@ -7357,15 +7373,13 @@ impl DatabaseManager {
                 UNION ALL
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
-                WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%')
-                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO' AND {}
+                WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%') AND {}
                 UNION ALL
-                SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
-                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                WHERE oo.advance_paid_paisa > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%') 
-                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
-            );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
+            );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond_oo),
             [],
             |r| r.get(0)
         ).unwrap_or(0);
@@ -7390,15 +7404,13 @@ impl DatabaseManager {
                 UNION ALL
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
-                WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%')
-                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO' AND {}
+                WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%') AND {}
                 UNION ALL
-                SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
-                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                WHERE oo.advance_paid_paisa > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%') 
-                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
-            );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
+            );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond_oo),
             [],
             |r| r.get(0)
         ).unwrap_or(0);
@@ -7516,12 +7528,10 @@ impl DatabaseManager {
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE UPPER(oop.payment_method) = 'CASH'
-                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                 UNION ALL
-                SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
-                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                WHERE oo.advance_paid_paisa > 0 
                   AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH'
-                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
             );",
             [],
@@ -7549,12 +7559,10 @@ impl DatabaseManager {
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%')
-                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                 UNION ALL
-                SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
-                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                WHERE oo.advance_paid_paisa > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%')
-                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
             );",
             [],
@@ -7582,12 +7590,10 @@ impl DatabaseManager {
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%')
-                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                 UNION ALL
-                SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
-                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                WHERE oo.advance_paid_paisa > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%')
-                  AND oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
             );",
             [],
@@ -7595,19 +7601,31 @@ impl DatabaseManager {
         ).unwrap_or(0);
 
         let all_time_cash_refunds: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(total_refund_amount_paisa), 0) FROM return_vouchers WHERE UPPER(refund_settlement_method) = 'CASH';",
+            "SELECT COALESCE(SUM(refund_paisa), 0) FROM (
+                SELECT total_refund_amount_paisa AS refund_paisa FROM return_vouchers WHERE UPPER(refund_settlement_method) = 'CASH'
+                UNION ALL
+                SELECT refund_amount_paisa AS refund_paisa FROM online_orders WHERE refund_amount_paisa > 0 AND UPPER(COALESCE(refund_settlement_method, 'CASH')) = 'CASH'
+            );",
             [],
             |r| r.get(0)
         ).unwrap_or(0);
 
         let all_time_ep_refunds: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(total_refund_amount_paisa), 0) FROM return_vouchers WHERE (UPPER(refund_settlement_method) LIKE '%EASYPAISA%' OR UPPER(refund_settlement_method) LIKE '%EASY_PAISA%');",
+            "SELECT COALESCE(SUM(refund_paisa), 0) FROM (
+                SELECT total_refund_amount_paisa AS refund_paisa FROM return_vouchers WHERE (UPPER(refund_settlement_method) LIKE '%EASYPAISA%' OR UPPER(refund_settlement_method) LIKE '%EASY_PAISA%')
+                UNION ALL
+                SELECT refund_amount_paisa AS refund_paisa FROM online_orders WHERE refund_amount_paisa > 0 AND (UPPER(COALESCE(refund_settlement_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(refund_settlement_method, '')) LIKE '%EASY_PAISA%')
+            );",
             [],
             |r| r.get(0)
         ).unwrap_or(0);
 
         let all_time_jc_refunds: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(total_refund_amount_paisa), 0) FROM return_vouchers WHERE (UPPER(refund_settlement_method) LIKE '%JAZZCASH%' OR UPPER(refund_settlement_method) LIKE '%JAZZ_CASH%');",
+            "SELECT COALESCE(SUM(refund_paisa), 0) FROM (
+                SELECT total_refund_amount_paisa AS refund_paisa FROM return_vouchers WHERE (UPPER(refund_settlement_method) LIKE '%JAZZCASH%' OR UPPER(refund_settlement_method) LIKE '%JAZZ_CASH%')
+                UNION ALL
+                SELECT refund_amount_paisa AS refund_paisa FROM online_orders WHERE refund_amount_paisa > 0 AND (UPPER(COALESCE(refund_settlement_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(refund_settlement_method, '')) LIKE '%JAZZ_CASH%')
+            );",
             [],
             |r| r.get(0)
         ).unwrap_or(0);
@@ -7641,16 +7659,18 @@ impl DatabaseManager {
         let all_time_jazzcash_paisa = (all_time_gross_jc - all_time_jc_refunds - all_time_jc_salaries).max(0);
 
         let (total_online_pending_paisa, online_pending_orders_count): (i64, i64) = conn.query_row(
-            "SELECT COALESCE(SUM(cod_balance_paisa), 0), COUNT(*) FROM online_orders WHERE payment_status != 'PAID' AND payment_status != 'RETURNED';",
+            "SELECT COALESCE(SUM(cod_balance_paisa), 0), COUNT(*) FROM online_orders WHERE payment_status NOT IN ('PAID', 'RETURNED') AND cod_balance_paisa > 0;",
             [],
             |r| Ok((r.get(0)?, r.get(1)?))
         ).unwrap_or((0, 0));
 
         let total_online_collected_paisa: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(oop.amount_paid_paisa), 0) 
-             FROM online_order_payments oop
-             JOIN online_orders oo ON oop.order_id = oo.order_id
-             WHERE oo.payment_status != 'RETURNED' AND oo.delivery_status != 'RETURNED_RTO';",
+            "SELECT COALESCE(SUM(collected), 0) FROM (
+                SELECT oop.amount_paid_paisa AS collected FROM online_order_payments oop
+                UNION ALL
+                SELECT oo.advance_paid_paisa AS collected FROM online_orders oo
+                WHERE oo.advance_paid_paisa > 0 AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
+            );",
             [],
             |r| r.get(0)
         ).unwrap_or(0);
@@ -9265,10 +9285,10 @@ impl DatabaseManager {
             now_str,
         ]).map_err(|e| format!("Failed to record payment: {}", e))?;
 
-        let (advance_paid, cod_balance): (i64, i64) = tx.query_row(
-            "SELECT advance_paid_paisa, cod_balance_paisa FROM online_orders WHERE order_id = ?;",
+        let (advance_paid, cod_balance, delivery_status): (i64, i64, String) = tx.query_row(
+            "SELECT advance_paid_paisa, cod_balance_paisa, delivery_status FROM online_orders WHERE order_id = ?;",
             [&payload.order_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         ).map_err(|e| format!("Order not found: {}", e))?;
 
         let new_advance = advance_paid + payload.amount_paid_paisa;
@@ -9280,6 +9300,11 @@ impl DatabaseManager {
 
         let new_payment_status = if new_cod == 0 { "PAID" } else { "PARTIAL" };
         let new_custodian = if new_cod == 0 { "SETTLED" } else { "COURIER" };
+        let new_delivery_status = if delivery_status == "RETURNED_RTO" {
+            "DELIVERED".to_string()
+        } else {
+            delivery_status
+        };
 
         tx.execute("
             UPDATE online_orders
@@ -9287,6 +9312,7 @@ impl DatabaseManager {
                 cod_balance_paisa = ?,
                 payment_status = ?,
                 payment_custodian = ?,
+                delivery_status = ?,
                 collected_by = ?,
                 collected_at = ?,
                 collection_method = ?,
@@ -9297,6 +9323,7 @@ impl DatabaseManager {
             new_cod,
             new_payment_status,
             new_custodian,
+            new_delivery_status,
             payload.collected_by,
             now_str,
             payload.payment_method,
@@ -9354,14 +9381,15 @@ impl DatabaseManager {
 
         if payload.is_partial == Some(true) {
             if let (Some(ref rem_json), Some(new_tot), Some(new_sub)) = (&payload.remaining_items_json, payload.new_total_paisa, payload.new_subtotal_paisa) {
-                let (curr_adv, _): (i64, i64) = tx.query_row(
-                    "SELECT advance_paid_paisa, cod_balance_paisa FROM online_orders WHERE order_id = ?;",
+                let (curr_adv, curr_ref): (i64, i64) = tx.query_row(
+                    "SELECT advance_paid_paisa, COALESCE(refund_amount_paisa, 0) FROM online_orders WHERE order_id = ?;",
                     [&payload.order_id],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 ).map_err(|e| format!("Order not found: {}", e))?;
 
-                let new_adv = (curr_adv - refund_amt).max(0);
-                let new_cod = (new_tot - new_adv).max(0);
+                let total_ref = curr_ref + refund_amt;
+                let net_collected = (curr_adv - total_ref).max(0);
+                let new_cod = (new_tot - net_collected).max(0);
                 let new_pay_status = if new_cod == 0 { "PAID" } else { "PARTIAL" };
 
                 tx.execute("
@@ -9369,13 +9397,12 @@ impl DatabaseManager {
                     SET items_json = ?,
                         subtotal_paisa = ?,
                         total_amount_paisa = ?,
-                        advance_paid_paisa = ?,
                         cod_balance_paisa = ?,
                         payment_status = ?,
                         delivery_status = 'PARTIAL_RETURN',
                         collected_at = datetime('now', 'localtime'),
                         return_reason = ?,
-                        refund_amount_paisa = COALESCE(refund_amount_paisa, 0) + ?,
+                        refund_amount_paisa = ?,
                         deduction_amount_paisa = ?,
                         refund_settlement_method = ?
                     WHERE order_id = ?;
@@ -9383,20 +9410,39 @@ impl DatabaseManager {
                     rem_json,
                     new_sub,
                     new_tot,
-                    new_adv,
                     new_cod,
                     new_pay_status,
                     payload.return_reason,
-                    refund_amt,
+                    total_ref,
                     deduct_amt,
                     refund_method,
                     payload.order_id,
                 ]).map_err(|e| format!("Failed to record partial return: {}", e))?;
             }
         } else {
+            let items_json_to_store = if let Some(ref rem) = payload.remaining_items_json {
+                rem.clone()
+            } else {
+                let curr_items: String = tx.query_row(
+                    "SELECT items_json FROM online_orders WHERE order_id = ?;",
+                    [&payload.order_id],
+                    |r| r.get(0),
+                ).unwrap_or_else(|_| "[]".to_string());
+                let mut updated_items = serde_json::from_str::<Vec<serde_json::Value>>(&curr_items).unwrap_or_default();
+                for item in &mut updated_items {
+                    if let Some(obj) = item.as_object_mut() {
+                        let qty = obj.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+                        obj.insert("returned_quantity".to_string(), serde_json::Value::Number(qty.into()));
+                        obj.insert("return_status".to_string(), serde_json::Value::String("RETURNED".to_string()));
+                    }
+                }
+                serde_json::to_string(&updated_items).unwrap_or(curr_items)
+            };
+
             tx.execute("
                 UPDATE online_orders
-                SET delivery_status = 'RETURNED_RTO',
+                SET items_json = ?,
+                    delivery_status = 'RETURNED_RTO',
                     payment_status = 'RETURNED',
                     payment_custodian = 'RETURNED',
                     cod_balance_paisa = 0,
@@ -9407,6 +9453,7 @@ impl DatabaseManager {
                     refund_settlement_method = ?
                 WHERE order_id = ?;
             ", rusqlite::params![
+                items_json_to_store,
                 payload.return_reason,
                 refund_amt,
                 deduct_amt,

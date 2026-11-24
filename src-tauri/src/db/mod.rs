@@ -7487,10 +7487,9 @@ impl DatabaseManager {
             |r| r.get(0)
         ).unwrap_or(0);
 
-        let cash_before_expenses = (gross_cash_received_paisa - cash_refunds_paisa - cash_salaries_paisa).max(0);
-        let total_cash_received_paisa = (cash_before_expenses - total_shop_expenses_paisa).max(0);
-        let total_easypaisa_received_paisa = (gross_easypaisa_received_paisa - easypaisa_refunds_paisa - easypaisa_salaries_paisa).max(0);
-        let total_jazzcash_received_paisa = (gross_jazzcash_received_paisa - jazzcash_refunds_paisa - jazzcash_salaries_paisa).max(0);
+        let total_cash_received_paisa = (gross_cash_received_paisa - cash_refunds_paisa).max(0);
+        let total_easypaisa_received_paisa = (gross_easypaisa_received_paisa - easypaisa_refunds_paisa).max(0);
+        let total_jazzcash_received_paisa = (gross_jazzcash_received_paisa - jazzcash_refunds_paisa).max(0);
 
         let total_bank_received_paisa: i64 = conn.query_row(
             &format!("SELECT COALESCE(SUM(amount_paisa), 0) FROM (
@@ -7509,10 +7508,10 @@ impl DatabaseManager {
         ).unwrap_or(0);
 
         let total_digital_bank_funds_paisa = total_easypaisa_received_paisa + total_jazzcash_received_paisa;
-        // Total Gross Funds: Counter cash (before petty shop expenses) + digital wallets (less disbursements)
-        let total_gross_liquidity_paisa = cash_before_expenses + total_digital_bank_funds_paisa;
-        // Net Available Treasury: Total gross liquidity less petty shop expenses
-        let net_available_treasury_paisa = (total_gross_liquidity_paisa - total_shop_expenses_paisa).max(0);
+        // Total Gross Funds: Counter cash (uncut by shop expenses or salaries) + digital wallets
+        let total_gross_liquidity_paisa = total_cash_received_paisa + total_digital_bank_funds_paisa;
+        // Net Available Treasury: Total gross liquidity less shop petty expenses & employee salaries
+        let net_available_treasury_paisa = (total_gross_liquidity_paisa - total_shop_expenses_paisa - total_salary_paid_paisa).max(0);
 
         // All-time available channel treasury balances (cumulative across entire business)
         let all_time_gross_cash: i64 = conn.query_row(
@@ -7654,9 +7653,9 @@ impl DatabaseManager {
             |r| r.get(0)
         ).unwrap_or(0);
 
-        let all_time_cash_drawer_paisa = (all_time_gross_cash - all_time_cash_refunds - all_time_cash_salaries - all_time_expenses).max(0);
-        let all_time_easypaisa_paisa = (all_time_gross_ep - all_time_ep_refunds - all_time_ep_salaries).max(0);
-        let all_time_jazzcash_paisa = (all_time_gross_jc - all_time_jc_refunds - all_time_jc_salaries).max(0);
+        let all_time_cash_drawer_paisa = (all_time_gross_cash - all_time_cash_refunds).max(0);
+        let all_time_easypaisa_paisa = (all_time_gross_ep - all_time_ep_refunds).max(0);
+        let all_time_jazzcash_paisa = (all_time_gross_jc - all_time_jc_refunds).max(0);
 
         let (total_online_pending_paisa, online_pending_orders_count): (i64, i64) = conn.query_row(
             "SELECT COALESCE(SUM(cod_balance_paisa), 0), COUNT(*) FROM online_orders WHERE payment_status NOT IN ('PAID', 'RETURNED') AND cod_balance_paisa > 0;",

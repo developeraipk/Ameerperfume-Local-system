@@ -560,12 +560,13 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
               const jazzCash = dashboard.total_jazzcash_received_paisa ?? 0;
               const totalWallets = easyPaisa + jazzCash;
               const totalExpenses = dashboard.total_shop_expenses_paisa ?? 0;
+              const totalSalaries = dashboard.total_salary_paid_paisa ?? 0;
               const totalGrossLiquidity = typeof dashboard.total_gross_liquidity_paisa === 'number'
                 ? dashboard.total_gross_liquidity_paisa
                 : (cashInTill + totalWallets);
               const netAvailableTreasury = typeof dashboard.net_available_treasury_paisa === 'number'
                 ? dashboard.net_available_treasury_paisa
-                : Math.max(0, totalGrossLiquidity - totalExpenses);
+                : Math.max(0, totalGrossLiquidity - totalExpenses - totalSalaries);
 
               return (
                 <div className="space-y-4">

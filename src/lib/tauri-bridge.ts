@@ -6,6 +6,10 @@ import {
   AppVersionInfo,
   WorkstationAppConfig,
   FinishedProduct,
+  OnlineOrder,
+  CreateOnlineOrderPayload,
+  CollectOnlinePaymentPayload,
+  MarkOnlineReturnPayload,
 } from "@/types/database";
 import { PromotionalOfferDto } from "@/types/offers";
 
@@ -1499,6 +1503,163 @@ export async function getTerminalBlockedStatus(
     "get_terminal_blocked_status",
     { terminal_id: terminalId, terminalId },
     { terminal_id: terminalId || "POS-02", is_blocked: false, blocked_reason: "" }
+  );
+}
+
+// ============================================================================
+// MODULE 18: ONLINE & SOCIAL ORDERS (WHATSAPP & WEBSITE) IPC BRIDGE
+// ============================================================================
+const fallbackOnlineOrdersKey = "ameer_online_orders_store";
+
+function getFallbackOnlineOrders(): OnlineOrder[] {
+  try {
+    const raw = localStorage.getItem(fallbackOnlineOrdersKey);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveFallbackOnlineOrders(orders: OnlineOrder[]): void {
+  try {
+    localStorage.setItem(fallbackOnlineOrdersKey, JSON.stringify(orders));
+  } catch (e) {
+    console.error("Failed to persist fallback online orders:", e);
+  }
+}
+
+export async function getOnlineOrders(): Promise<OnlineOrder[]> {
+  const fallback = getFallbackOnlineOrders();
+  const res = await safeInvoke<OnlineOrder[]>("get_online_orders", undefined, fallback);
+  if (res && Array.isArray(res) && res.length > 0) {
+    saveFallbackOnlineOrders(res);
+    return res;
+  }
+  return fallback;
+}
+
+export async function createOnlineOrder(
+  payload: CreateOnlineOrderPayload
+): Promise<OnlineOrder> {
+  const now = new Date();
+  const dateStr = now.toISOString().replace("T", " ").substring(0, 19);
+  const prefix = payload.channel === "WHATSAPP" ? "WA" : "WEB";
+  const datePart =
+    now.getFullYear().toString() +
+    String(now.getMonth() + 1).padStart(2, "0") +
+    String(now.getDate()).padStart(2, "0");
+  const fallbackOrders = getFallbackOnlineOrders();
+  const orderNum = `${prefix}-${datePart}-${String(fallbackOrders.length + 1).padStart(4, "0")}`;
+
+  const fallbackOrder: OnlineOrder = {
+    order_id: `ord_onl_${Date.now()}`,
+    order_number: orderNum,
+    channel: payload.channel,
+    customer_name: payload.customer_name,
+    customer_phone: payload.customer_phone,
+    shipping_address: payload.shipping_address,
+    city: payload.city,
+    items_json: payload.items_json,
+    subtotal_paisa: payload.subtotal_paisa,
+    delivery_charges_paisa: payload.delivery_charges_paisa,
+    discount_paisa: payload.discount_paisa,
+    total_amount_paisa: payload.total_amount_paisa,
+    advance_paid_paisa: payload.advance_paid_paisa,
+    cod_balance_paisa: payload.cod_balance_paisa,
+    payment_status:
+      payload.cod_balance_paisa <= 0
+        ? "PAID"
+        : payload.advance_paid_paisa > 0
+        ? "PARTIAL"
+        : "PENDING",
+    payment_custodian:
+      payload.cod_balance_paisa <= 0 ? "SETTLED" : payload.payment_custodian,
+    courier_partner: payload.courier_partner,
+    tracking_number: payload.tracking_number || "",
+    delivery_status: "BOOKED",
+    collected_by: payload.advance_paid_paisa > 0 ? payload.created_by_user_id : "",
+    collected_at: payload.advance_paid_paisa > 0 ? dateStr : null,
+    collection_method: payload.advance_paid_paisa > 0 ? "ADVANCE" : null,
+    notes: payload.notes || null,
+    created_at: dateStr,
+    created_by_user_id: payload.created_by_user_id,
+  };
+
+  const res = await safeInvoke<OnlineOrder>("create_online_order", { payload }, fallbackOrder);
+  fallbackOrders.unshift(res);
+  saveFallbackOnlineOrders(fallbackOrders);
+  return res;
+}
+
+export async function collectOnlineOrderPayment(
+  payload: CollectOnlinePaymentPayload
+): Promise<boolean> {
+  const fallbackOrders = getFallbackOnlineOrders();
+  const idx = fallbackOrders.findIndex((o) => o.order_id === payload.order_id);
+  if (idx !== -1) {
+    const o = fallbackOrders[idx];
+    const newAdvance = o.advance_paid_paisa + payload.amount_paid_paisa;
+    const newCod = Math.max(0, o.cod_balance_paisa - payload.amount_paid_paisa);
+    o.advance_paid_paisa = newAdvance;
+    o.cod_balance_paisa = newCod;
+    o.payment_status = newCod === 0 ? "PAID" : "PARTIAL";
+    o.payment_custodian = newCod === 0 ? "SETTLED" : "COURIER";
+    o.collected_by = payload.collected_by;
+    o.collected_at = new Date().toISOString().replace("T", " ").substring(0, 19);
+    o.collection_method = payload.payment_method;
+    o.collection_reference = payload.reference_number || null;
+    saveFallbackOnlineOrders(fallbackOrders);
+  }
+
+  return safeInvoke<boolean>("collect_online_order_payment", { payload }, true);
+}
+
+export async function markOnlineOrderReturn(
+  payload: MarkOnlineReturnPayload
+): Promise<boolean> {
+  const fallbackOrders = getFallbackOnlineOrders();
+  const idx = fallbackOrders.findIndex((o) => o.order_id === payload.order_id);
+  if (idx !== -1) {
+    const o = fallbackOrders[idx];
+    o.delivery_status = "RETURNED_RTO";
+    o.payment_status = "RETURNED";
+    o.payment_custodian = "RETURNED";
+    o.cod_balance_paisa = 0;
+    o.return_reason = payload.return_reason;
+    saveFallbackOnlineOrders(fallbackOrders);
+  }
+
+  return safeInvoke<boolean>("mark_online_order_return", { payload }, true);
+}
+
+export async function updateOnlineOrderStatus(
+  orderId: string,
+  deliveryStatus: string,
+  trackingNumber?: string,
+  courierPartner?: string
+): Promise<boolean> {
+  const fallbackOrders = getFallbackOnlineOrders();
+  const idx = fallbackOrders.findIndex((o) => o.order_id === orderId);
+  if (idx !== -1) {
+    fallbackOrders[idx].delivery_status = deliveryStatus as any;
+    if (trackingNumber) fallbackOrders[idx].tracking_number = trackingNumber;
+    if (courierPartner) fallbackOrders[idx].courier_partner = courierPartner;
+    saveFallbackOnlineOrders(fallbackOrders);
+  }
+
+  return safeInvoke<boolean>(
+    "update_online_order_status",
+    {
+      order_id: orderId,
+      orderId,
+      delivery_status: deliveryStatus,
+      deliveryStatus,
+      tracking_number: trackingNumber,
+      trackingNumber,
+      courier_partner: courierPartner,
+      courierPartner,
+    },
+    true
   );
 }
 

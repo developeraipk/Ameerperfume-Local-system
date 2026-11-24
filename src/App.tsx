@@ -8,6 +8,7 @@ import { ProductCatalog } from "@/screens/SCR-CAT-01_ProductCatalog";
 import { Procurement } from "@/screens/SCR-PUR-01_Procurement";
 import { Manufacturing } from "@/screens/SCR-MFG-01_Manufacturing";
 import { WholesaleInvoicing } from "@/screens/SCR-WHO-01_WholesaleInvoicing";
+import { OnlineOrders } from "@/screens/SCR-ONL-01_OnlineOrders";
 import { AttarSales } from "@/screens/SCR-ATR-01_AttarSales";
 import { ShopExpenses } from "@/screens/SCR-EXP-01_ShopExpenses";
 import { EmployeeSalaries } from "@/screens/SCR-SAL-01_EmployeeSalaries";
@@ -200,6 +201,7 @@ export function App() {
         "OWNER_DASHBOARD",
         "AUDIT_REPORTS",
         "WHOLESALE",
+        "ONLINE_ORDERS",
         "CATALOG",
         "ATTAR",
         "POS",
@@ -212,6 +214,7 @@ export function App() {
     } else if (role === "CASHIER_OPERATOR") {
       const allowedCashierScreens: ActiveScreen[] = [
         "POS",
+        "ONLINE_ORDERS",
         "RETURNS",
         "ATTAR",
         "CATALOG",
@@ -283,6 +286,11 @@ export function App() {
         {activeScreen === "WHOLESALE" && (
           <div className="flex-1 overflow-y-auto min-w-0">
             <WholesaleInvoicing currentUser={currentUser} />
+          </div>
+        )}
+        {activeScreen === "ONLINE_ORDERS" && (
+          <div className="flex-1 overflow-y-auto min-w-0">
+            <OnlineOrders currentUser={currentUser} />
           </div>
         )}
         {activeScreen === "ATTAR" && (

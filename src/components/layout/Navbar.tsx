@@ -24,12 +24,14 @@ import {
   ShieldCheck,
   BadgeDollarSign,
   TrendingUp,
+  Globe,
 } from "lucide-react";
 import { resetDatabaseForTesting } from "@/lib/tauri-bridge";
 import logoNavbar from "@/assets/logo-rect.png";
 
 export type ActiveScreen =
   | "POS"
+  | "ONLINE_ORDERS"
   | "CATALOG"
   | "ATTAR"
   | "PROCUREMENT"
@@ -245,6 +247,19 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
 
             <button
+              onClick={() => handleSelectScreen("ONLINE_ORDERS")}
+              className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-all duration-150 select-none ${
+                activeScreen === "ONLINE_ORDERS"
+                  ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
+                  : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
+              }`}
+              title="WhatsApp & Website Online Commerce Hub"
+            >
+              <Globe className="w-4 h-4 text-emerald-500 shrink-0" />
+              <span>Online Orders</span>
+            </button>
+
+            <button
               onClick={() => handleSelectScreen("ATTAR")}
               className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-all duration-150 select-none ${
                 activeScreen === "ATTAR"
@@ -348,6 +363,19 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Briefcase className="w-4 h-4 text-blue-500 shrink-0" />
               <span>Wholesale</span>
+            </button>
+
+            <button
+              onClick={() => handleSelectScreen("ONLINE_ORDERS")}
+              className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-all duration-150 select-none ${
+                activeScreen === "ONLINE_ORDERS"
+                  ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
+                  : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
+              }`}
+              title="WhatsApp & Website Online Commerce Hub"
+            >
+              <Globe className="w-4 h-4 text-emerald-500 shrink-0" />
+              <span>Online Orders</span>
             </button>
 
             <button
@@ -483,6 +511,20 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Briefcase className="w-4 h-4 text-blue-500 shrink-0" />
               <span>Wholesale</span>
+            </button>
+
+            {/* Quick Primary Tab: Online Orders (WhatsApp & Website Hub) */}
+            <button
+              onClick={() => handleSelectScreen("ONLINE_ORDERS")}
+              className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-xl text-xs sm:text-[13px] font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+                activeScreen === "ONLINE_ORDERS"
+                  ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
+                  : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
+              }`}
+              title="WhatsApp & Website Online Orders Hub"
+            >
+              <Globe className="w-4 h-4 text-emerald-500 shrink-0" />
+              <span>Online Orders</span>
             </button>
 
             {/* Category Separator */}

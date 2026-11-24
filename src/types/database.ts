@@ -1325,3 +1325,82 @@ export interface PoleDisplayTestResult {
   line2_rendered: string;
   message: string;
 }
+
+export interface OnlineOrderItem {
+  item_id?: string;
+  product_id?: string;
+  attar_id?: string;
+  name: string;
+  item_type: "PERFUME" | "ATTAR";
+  quantity: number;
+  size_ml?: number;
+  unit_price_paisa: number;
+  line_total_paisa: number;
+  grams?: number;
+}
+
+export interface OnlineOrder {
+  order_id: string;
+  order_number: string;
+  channel: "WHATSAPP" | "WEBSITE";
+  customer_name: string;
+  customer_phone: string;
+  shipping_address: string;
+  city: string;
+  items_json: string;
+  items?: OnlineOrderItem[];
+  subtotal_paisa: number;
+  delivery_charges_paisa: number;
+  discount_paisa: number;
+  total_amount_paisa: number;
+  advance_paid_paisa: number;
+  cod_balance_paisa: number;
+  payment_status: "PAID" | "PARTIAL" | "PENDING" | "RETURNED";
+  payment_custodian: "COURIER" | "STAFF_HANDLER" | "SETTLED" | "RETURNED";
+  courier_partner: string;
+  tracking_number: string;
+  delivery_status: "BOOKED" | "DISPATCHED" | "DELIVERED" | "RETURNED_RTO" | "CANCELLED";
+  collected_by: string;
+  collected_at?: string | null;
+  collection_method?: string | null;
+  collection_reference?: string | null;
+  return_reason?: string | null;
+  notes?: string | null;
+  created_at: string;
+  created_by_user_id: string;
+}
+
+export interface CreateOnlineOrderPayload {
+  channel: "WHATSAPP" | "WEBSITE";
+  customer_name: string;
+  customer_phone: string;
+  shipping_address: string;
+  city: string;
+  items_json: string;
+  subtotal_paisa: number;
+  delivery_charges_paisa: number;
+  discount_paisa: number;
+  total_amount_paisa: number;
+  advance_paid_paisa: number;
+  cod_balance_paisa: number;
+  payment_custodian: "COURIER" | "STAFF_HANDLER";
+  courier_partner: string;
+  tracking_number?: string;
+  notes?: string;
+  created_by_user_id: string;
+}
+
+export interface CollectOnlinePaymentPayload {
+  order_id: string;
+  amount_paid_paisa: number;
+  payment_method: string;
+  reference_number?: string;
+  collected_by: string;
+  notes?: string;
+}
+
+export interface MarkOnlineReturnPayload {
+  order_id: string;
+  return_reason: string;
+  user_id: string;
+}

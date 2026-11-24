@@ -151,7 +151,12 @@ pub fn run() {
             commands::export_database_to_desktop,
             commands::enable_windows_lan_sharing,
             commands::set_terminal_blocked_status,
-            commands::get_terminal_blocked_status
+            commands::get_terminal_blocked_status,
+            commands::get_online_orders,
+            commands::create_online_order,
+            commands::collect_online_order_payment,
+            commands::mark_online_order_return,
+            commands::update_online_order_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running Ameer Perfumes ERP desktop application");

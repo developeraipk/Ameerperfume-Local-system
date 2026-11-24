@@ -1177,3 +1177,51 @@ pub fn get_terminal_blocked_status(
         "blocked_reason": reason
     }))
 }
+
+// ============================================================================
+// MODULE 18: ONLINE & SOCIAL ORDERS (WHATSAPP & WEBSITE) COMMANDS
+// ============================================================================
+
+#[tauri::command]
+pub fn get_online_orders() -> Result<Vec<crate::db::OnlineOrderDto>, String> {
+    let db = DatabaseManager::new();
+    db.get_online_orders()
+}
+
+#[tauri::command]
+pub fn create_online_order(payload: crate::db::CreateOnlineOrderPayload) -> Result<crate::db::OnlineOrderDto, String> {
+    let db = DatabaseManager::new();
+    db.create_online_order(&payload)
+}
+
+#[tauri::command]
+pub fn collect_online_order_payment(payload: crate::db::CollectOnlinePaymentPayload) -> Result<bool, String> {
+    let db = DatabaseManager::new();
+    db.collect_online_order_payment(&payload)
+}
+
+#[tauri::command]
+pub fn mark_online_order_return(payload: crate::db::MarkOnlineReturnPayload) -> Result<bool, String> {
+    let db = DatabaseManager::new();
+    db.mark_online_order_return(&payload)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn update_online_order_status(
+    order_id: Option<String>,
+    orderId: Option<String>,
+    delivery_status: Option<String>,
+    deliveryStatus: Option<String>,
+    tracking_number: Option<String>,
+    trackingNumber: Option<String>,
+    courier_partner: Option<String>,
+    courierPartner: Option<String>,
+) -> Result<bool, String> {
+    let oid = order_id.or(orderId).ok_or_else(|| "Order ID required".to_string())?;
+    let status = delivery_status.or(deliveryStatus).unwrap_or_else(|| "BOOKED".to_string());
+    let track = tracking_number.or(trackingNumber);
+    let courier = courier_partner.or(courierPartner);
+    let db = DatabaseManager::new();
+    db.update_online_order_status(&oid, &status, track.as_deref(), courier.as_deref())
+}

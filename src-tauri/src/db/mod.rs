@@ -783,6 +783,56 @@ impl DatabaseManager {
             [],
         );
 
+        // Guarantee online_orders and online_order_payments tables exist
+        let _ = conn.execute("
+            CREATE TABLE IF NOT EXISTS online_orders (
+                order_id TEXT PRIMARY KEY NOT NULL,
+                order_number TEXT UNIQUE NOT NULL,
+                channel TEXT NOT NULL,
+                customer_name TEXT NOT NULL,
+                customer_phone TEXT NOT NULL,
+                shipping_address TEXT NOT NULL,
+                city TEXT NOT NULL,
+                items_json TEXT NOT NULL,
+                subtotal_paisa INTEGER NOT NULL DEFAULT 0,
+                delivery_charges_paisa INTEGER NOT NULL DEFAULT 0,
+                discount_paisa INTEGER NOT NULL DEFAULT 0,
+                total_amount_paisa INTEGER NOT NULL DEFAULT 0,
+                advance_paid_paisa INTEGER NOT NULL DEFAULT 0,
+                cod_balance_paisa INTEGER NOT NULL DEFAULT 0,
+                payment_status TEXT NOT NULL DEFAULT 'PENDING',
+                payment_custodian TEXT NOT NULL DEFAULT 'COURIER',
+                courier_partner TEXT NOT NULL DEFAULT 'TCS',
+                tracking_number TEXT NOT NULL DEFAULT '',
+                delivery_status TEXT NOT NULL DEFAULT 'BOOKED',
+                collected_by TEXT NOT NULL DEFAULT '',
+                collected_at TEXT,
+                collection_method TEXT,
+                collection_reference TEXT,
+                return_reason TEXT,
+                notes TEXT,
+                created_at TEXT NOT NULL,
+                created_by_user_id TEXT NOT NULL
+            );
+        ", []);
+
+        let _ = conn.execute("
+            CREATE TABLE IF NOT EXISTS online_order_payments (
+                payment_id TEXT PRIMARY KEY NOT NULL,
+                order_id TEXT NOT NULL REFERENCES online_orders(order_id) ON DELETE CASCADE,
+                amount_paid_paisa INTEGER NOT NULL,
+                payment_method TEXT NOT NULL,
+                reference_number TEXT,
+                collected_by TEXT NOT NULL,
+                notes TEXT,
+                created_at TEXT NOT NULL
+            );
+        ", []);
+
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_online_orders_created ON online_orders(created_at);", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_online_orders_channel ON online_orders(channel);", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_online_orders_status ON online_orders(delivery_status);", []);
+
         Ok((current_version.max(231), current_version < 231))
     }
 
@@ -8409,6 +8459,402 @@ impl DatabaseManager {
             .map_err(|e| format!("Failed to delete promotional offer: {}", e))?;
         Ok(true)
     }
+
+    // ========================================================================
+    // ONLINE & SOCIAL COMMERCE (WHATSAPP & WEBSITE) ORDER HUB
+    // ========================================================================
+    pub fn get_online_orders(&self) -> Result<Vec<OnlineOrderDto>, String> {
+        let conn = self.get_connection().map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare("
+            SELECT order_id, order_number, channel, customer_name, customer_phone,
+                   shipping_address, city, items_json, subtotal_paisa, delivery_charges_paisa,
+                   discount_paisa, total_amount_paisa, advance_paid_paisa, cod_balance_paisa,
+                   payment_status, payment_custodian, courier_partner, tracking_number,
+                   delivery_status, collected_by, collected_at, collection_method,
+                   collection_reference, return_reason, notes, created_at, created_by_user_id
+            FROM online_orders
+            ORDER BY created_at DESC;
+        ").map_err(|e| e.to_string())?;
+
+        let rows = stmt.query_map([], |r| {
+            Ok(OnlineOrderDto {
+                order_id: r.get(0)?,
+                order_number: r.get(1)?,
+                channel: r.get(2)?,
+                customer_name: r.get(3)?,
+                customer_phone: r.get(4)?,
+                shipping_address: r.get(5)?,
+                city: r.get(6)?,
+                items_json: r.get(7)?,
+                subtotal_paisa: r.get(8)?,
+                delivery_charges_paisa: r.get(9)?,
+                discount_paisa: r.get(10)?,
+                total_amount_paisa: r.get(11)?,
+                advance_paid_paisa: r.get(12)?,
+                cod_balance_paisa: r.get(13)?,
+                payment_status: r.get(14)?,
+                payment_custodian: r.get(15)?,
+                courier_partner: r.get(16)?,
+                tracking_number: r.get(17)?,
+                delivery_status: r.get(18)?,
+                collected_by: r.get(19)?,
+                collected_at: r.get(20)?,
+                collection_method: r.get(21)?,
+                collection_reference: r.get(22)?,
+                return_reason: r.get(23)?,
+                notes: r.get(24)?,
+                created_at: r.get(25)?,
+                created_by_user_id: r.get(26)?,
+            })
+        }).map_err(|e| e.to_string())?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            if let Ok(dto) = r {
+                list.push(dto);
+            }
+        }
+        Ok(list)
+    }
+
+    pub fn create_online_order(&self, payload: &CreateOnlineOrderPayload) -> Result<OnlineOrderDto, String> {
+        let mut conn = self.get_connection().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+        let now = chrono::Local::now();
+        let now_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
+        let timestamp_ms = chrono::Utc::now().timestamp_millis();
+        
+        let order_id = format!("ord_onl_{}", timestamp_ms);
+        let prefix = if payload.channel.to_uppercase() == "WHATSAPP" { "WA" } else { "WEB" };
+        let date_part = now.format("%Y%m%d").to_string();
+        
+        let today_count: i64 = tx.query_row(
+            "SELECT count(*) FROM online_orders WHERE order_number LIKE ?;",
+            [format!("{}-{}-%", prefix, date_part)],
+            |r| r.get(0),
+        ).unwrap_or(0);
+        
+        let order_number = format!("{}-{}-{:04}", prefix, date_part, today_count + 1);
+        
+        let payment_status = if payload.cod_balance_paisa <= 0 {
+            "PAID".to_string()
+        } else if payload.advance_paid_paisa > 0 {
+            "PARTIAL".to_string()
+        } else {
+            "PENDING".to_string()
+        };
+
+        let payment_custodian = if payload.cod_balance_paisa <= 0 {
+            "SETTLED".to_string()
+        } else {
+            payload.payment_custodian.clone()
+        };
+
+        tx.execute("
+            INSERT INTO online_orders (
+                order_id, order_number, channel, customer_name, customer_phone,
+                shipping_address, city, items_json, subtotal_paisa, delivery_charges_paisa,
+                discount_paisa, total_amount_paisa, advance_paid_paisa, cod_balance_paisa,
+                payment_status, payment_custodian, courier_partner, tracking_number,
+                delivery_status, collected_by, collected_at, collection_method,
+                collection_reference, return_reason, notes, created_at, created_by_user_id
+            ) VALUES (
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?
+            );
+        ", rusqlite::params![
+            order_id,
+            order_number,
+            payload.channel.to_uppercase(),
+            payload.customer_name,
+            payload.customer_phone,
+            payload.shipping_address,
+            payload.city,
+            payload.items_json,
+            payload.subtotal_paisa,
+            payload.delivery_charges_paisa,
+            payload.discount_paisa,
+            payload.total_amount_paisa,
+            payload.advance_paid_paisa,
+            payload.cod_balance_paisa,
+            payment_status,
+            payment_custodian,
+            payload.courier_partner,
+            payload.tracking_number.as_deref().unwrap_or(""),
+            "BOOKED",
+            if payload.advance_paid_paisa > 0 { &payload.created_by_user_id } else { "" },
+            if payload.advance_paid_paisa > 0 { Some(&now_str) } else { None },
+            if payload.advance_paid_paisa > 0 { Some("ADVANCE") } else { None },
+            None::<String>,
+            None::<String>,
+            payload.notes.as_deref(),
+            now_str,
+            payload.created_by_user_id,
+        ]).map_err(|e| format!("Failed to create online order: {}", e))?;
+
+        // Stock deduction for items
+        if let Ok(parsed_items) = serde_json::from_str::<Vec<serde_json::Value>>(&payload.items_json) {
+            for it in parsed_items {
+                let qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+                if let Some(pid) = it.get("product_id").and_then(|p| p.as_str()) {
+                    let _ = tx.execute(
+                        "UPDATE finished_products SET current_stock_units = MAX(0, current_stock_units - ?) WHERE product_id = ?;",
+                        rusqlite::params![qty, pid],
+                    );
+                } else if let Some(aid) = it.get("attar_id").and_then(|a| a.as_str()) {
+                    let grams = it.get("grams").and_then(|g| g.as_f64()).unwrap_or(qty as f64 * 12.0);
+                    let _ = tx.execute(
+                        "UPDATE attar_products SET current_stock_grams = MAX(0, current_stock_grams - ?) WHERE attar_id = ?;",
+                        rusqlite::params![grams, aid],
+                    );
+                }
+            }
+        }
+
+        tx.commit().map_err(|e| e.to_string())?;
+
+        Ok(OnlineOrderDto {
+            order_id,
+            order_number,
+            channel: payload.channel.to_uppercase(),
+            customer_name: payload.customer_name.clone(),
+            customer_phone: payload.customer_phone.clone(),
+            shipping_address: payload.shipping_address.clone(),
+            city: payload.city.clone(),
+            items_json: payload.items_json.clone(),
+            subtotal_paisa: payload.subtotal_paisa,
+            delivery_charges_paisa: payload.delivery_charges_paisa,
+            discount_paisa: payload.discount_paisa,
+            total_amount_paisa: payload.total_amount_paisa,
+            advance_paid_paisa: payload.advance_paid_paisa,
+            cod_balance_paisa: payload.cod_balance_paisa,
+            payment_status,
+            payment_custodian,
+            courier_partner: payload.courier_partner.clone(),
+            tracking_number: payload.tracking_number.clone().unwrap_or_default(),
+            delivery_status: "BOOKED".to_string(),
+            collected_by: if payload.advance_paid_paisa > 0 { payload.created_by_user_id.clone() } else { "".to_string() },
+            collected_at: if payload.advance_paid_paisa > 0 { Some(now_str.clone()) } else { None },
+            collection_method: if payload.advance_paid_paisa > 0 { Some("ADVANCE".to_string()) } else { None },
+            collection_reference: None,
+            return_reason: None,
+            notes: payload.notes.clone(),
+            created_at: now_str,
+            created_by_user_id: payload.created_by_user_id.clone(),
+        })
+    }
+
+    pub fn collect_online_order_payment(&self, payload: &CollectOnlinePaymentPayload) -> Result<bool, String> {
+        let mut conn = self.get_connection().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+        let now_str = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let payment_id = format!("pay_onl_{}", chrono::Utc::now().timestamp_millis());
+
+        tx.execute("
+            INSERT INTO online_order_payments (
+                payment_id, order_id, amount_paid_paisa, payment_method,
+                reference_number, collected_by, notes, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+        ", rusqlite::params![
+            payment_id,
+            payload.order_id,
+            payload.amount_paid_paisa,
+            payload.payment_method,
+            payload.reference_number.as_deref().unwrap_or(""),
+            payload.collected_by,
+            payload.notes.as_deref().unwrap_or(""),
+            now_str,
+        ]).map_err(|e| format!("Failed to record payment: {}", e))?;
+
+        let (advance_paid, cod_balance): (i64, i64) = tx.query_row(
+            "SELECT advance_paid_paisa, cod_balance_paisa FROM online_orders WHERE order_id = ?;",
+            [&payload.order_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).map_err(|e| format!("Order not found: {}", e))?;
+
+        let new_advance = advance_paid + payload.amount_paid_paisa;
+        let new_cod = if cod_balance > payload.amount_paid_paisa {
+            cod_balance - payload.amount_paid_paisa
+        } else {
+            0
+        };
+
+        let new_payment_status = if new_cod == 0 { "PAID" } else { "PARTIAL" };
+        let new_custodian = if new_cod == 0 { "SETTLED" } else { "COURIER" };
+
+        tx.execute("
+            UPDATE online_orders
+            SET advance_paid_paisa = ?,
+                cod_balance_paisa = ?,
+                payment_status = ?,
+                payment_custodian = ?,
+                collected_by = ?,
+                collected_at = ?,
+                collection_method = ?,
+                collection_reference = ?
+            WHERE order_id = ?;
+        ", rusqlite::params![
+            new_advance,
+            new_cod,
+            new_payment_status,
+            new_custodian,
+            payload.collected_by,
+            now_str,
+            payload.payment_method,
+            payload.reference_number.as_deref().unwrap_or(""),
+            payload.order_id,
+        ]).map_err(|e| format!("Failed to update order settlement: {}", e))?;
+
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
+    pub fn mark_online_order_return(&self, payload: &MarkOnlineReturnPayload) -> Result<bool, String> {
+        let mut conn = self.get_connection().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+        let items_json: String = tx.query_row(
+            "SELECT items_json FROM online_orders WHERE order_id = ?;",
+            [&payload.order_id],
+            |r| r.get(0),
+        ).map_err(|e| format!("Order not found: {}", e))?;
+
+        if let Ok(parsed_items) = serde_json::from_str::<Vec<serde_json::Value>>(&items_json) {
+            for it in parsed_items {
+                let qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+                if let Some(pid) = it.get("product_id").and_then(|p| p.as_str()) {
+                    let _ = tx.execute(
+                        "UPDATE finished_products SET current_stock_units = current_stock_units + ? WHERE product_id = ?;",
+                        rusqlite::params![qty, pid],
+                    );
+                } else if let Some(aid) = it.get("attar_id").and_then(|a| a.as_str()) {
+                    let grams = it.get("grams").and_then(|g| g.as_f64()).unwrap_or(qty as f64 * 12.0);
+                    let _ = tx.execute(
+                        "UPDATE attar_products SET current_stock_grams = current_stock_grams + ? WHERE attar_id = ?;",
+                        rusqlite::params![grams, aid],
+                    );
+                }
+            }
+        }
+
+        tx.execute("
+            UPDATE online_orders
+            SET delivery_status = 'RETURNED_RTO',
+                payment_status = 'RETURNED',
+                payment_custodian = 'RETURNED',
+                cod_balance_paisa = 0,
+                return_reason = ?
+            WHERE order_id = ?;
+        ", rusqlite::params![
+            payload.return_reason,
+            payload.order_id,
+        ]).map_err(|e| format!("Failed to mark return: {}", e))?;
+
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
+    pub fn update_online_order_status(
+        &self,
+        order_id: &str,
+        delivery_status: &str,
+        tracking_number: Option<&str>,
+        courier_partner: Option<&str>,
+    ) -> Result<bool, String> {
+        let conn = self.get_connection().map_err(|e| e.to_string())?;
+        
+        if let (Some(track), Some(courier)) = (tracking_number, courier_partner) {
+            conn.execute("
+                UPDATE online_orders
+                SET delivery_status = ?, tracking_number = ?, courier_partner = ?
+                WHERE order_id = ?;
+            ", rusqlite::params![delivery_status, track, courier, order_id])
+                .map_err(|e| e.to_string())?;
+        } else {
+            conn.execute("
+                UPDATE online_orders
+                SET delivery_status = ?
+                WHERE order_id = ?;
+            ", rusqlite::params![delivery_status, order_id])
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(true)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct OnlineOrderDto {
+    pub order_id: String,
+    pub order_number: String,
+    pub channel: String,
+    pub customer_name: String,
+    pub customer_phone: String,
+    pub shipping_address: String,
+    pub city: String,
+    pub items_json: String,
+    pub subtotal_paisa: i64,
+    pub delivery_charges_paisa: i64,
+    pub discount_paisa: i64,
+    pub total_amount_paisa: i64,
+    pub advance_paid_paisa: i64,
+    pub cod_balance_paisa: i64,
+    pub payment_status: String,
+    pub payment_custodian: String,
+    pub courier_partner: String,
+    pub tracking_number: String,
+    pub delivery_status: String,
+    pub collected_by: String,
+    pub collected_at: Option<String>,
+    pub collection_method: Option<String>,
+    pub collection_reference: Option<String>,
+    pub return_reason: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub created_by_user_id: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CreateOnlineOrderPayload {
+    pub channel: String,
+    pub customer_name: String,
+    pub customer_phone: String,
+    pub shipping_address: String,
+    pub city: String,
+    pub items_json: String,
+    pub subtotal_paisa: i64,
+    pub delivery_charges_paisa: i64,
+    pub discount_paisa: i64,
+    pub total_amount_paisa: i64,
+    pub advance_paid_paisa: i64,
+    pub cod_balance_paisa: i64,
+    pub payment_custodian: String,
+    pub courier_partner: String,
+    pub tracking_number: Option<String>,
+    pub notes: Option<String>,
+    pub created_by_user_id: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CollectOnlinePaymentPayload {
+    pub order_id: String,
+    pub amount_paid_paisa: i64,
+    pub payment_method: String,
+    pub reference_number: Option<String>,
+    pub collected_by: String,
+    pub notes: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MarkOnlineReturnPayload {
+    pub order_id: String,
+    pub return_reason: String,
+    pub user_id: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

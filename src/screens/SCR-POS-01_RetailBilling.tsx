@@ -96,7 +96,6 @@ export const RetailBilling: React.FC<RetailBillingProps> = ({ currentUser, statu
   const [isLoading, setIsLoading] = useState(true);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<"CASH" | "EASYPAISA" | "JAZZCASH">("CASH");
   const [digitalWalletTid, setDigitalWalletTid] = useState<string>("");
-  const [orderChannel, setOrderChannel] = useState<"SHOP" | "WHATSAPP" | "WEBSITE" | "PHONE">("SHOP");
   const [autoPrintReceipt, setAutoPrintReceipt] = useState<boolean>(true);
   const [tenderedCashRupees, setTenderedCashRupees] = useState<string>("");
   const [isQuickCashModalOpen, setIsQuickCashModalOpen] = useState(false);
@@ -1163,7 +1162,7 @@ export const RetailBilling: React.FC<RetailBillingProps> = ({ currentUser, statu
         salesperson_id: validSalespersonId,
         cashier_user_id: recordedCashierId,
         terminal_id: activeTerminalId,
-        order_source: orderChannel === "SHOP" || (orderChannel as string) === "PHONE" ? "WALK_IN" : orderChannel,
+        order_source: "WALK_IN",
         items: cart.map((item) => ({
           product_id: item.attar_id || item.product_id,
           product_name: item.name,
@@ -1719,54 +1718,6 @@ export const RetailBilling: React.FC<RetailBillingProps> = ({ currentUser, statu
             )}
           </div>
 
-          {/* Quick Order Channel Switcher directly on POS Screen */}
-          <div className="shrink-0 px-4 py-2 bg-slate-100/90 dark:bg-slate-950/90 border-b border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-              <span>Order Channel:</span>
-              <span className="font-bold text-amber-600 dark:text-amber-400 font-mono text-[10px]">
-                {orderChannel === "SHOP" ? "🏪 SHOP WALK-IN" : orderChannel === "WHATSAPP" ? "💬 WHATSAPP ORDER" : "🌐 WEBSITE ORDER"}
-              </span>
-            </div>
-            <div className="grid grid-cols-3 gap-1.5">
-              <button
-                type="button"
-                onClick={() => setOrderChannel("SHOP")}
-                className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer border ${
-                  orderChannel === "SHOP"
-                    ? "bg-amber-500 text-slate-950 border-amber-400 shadow-sm"
-                    : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300"
-                }`}
-              >
-                <span>🏪</span>
-                <span className="truncate">Shop</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setOrderChannel("WHATSAPP")}
-                className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer border ${
-                  orderChannel === "WHATSAPP"
-                    ? "bg-emerald-600 text-white border-emerald-500 shadow-sm"
-                    : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300"
-                }`}
-              >
-                <span>💬</span>
-                <span className="truncate">WhatsApp</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setOrderChannel("WEBSITE")}
-                className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer border ${
-                  orderChannel === "WEBSITE"
-                    ? "bg-blue-600 text-white border-blue-500 shadow-sm"
-                    : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300"
-                }`}
-              >
-                <span>🌐</span>
-                <span className="truncate">Website</span>
-              </button>
-            </div>
-          </div>
-
           {/* Cart Items List */}
           <div className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3">
             {cart.length === 0 ? (
@@ -2124,35 +2075,7 @@ export const RetailBilling: React.FC<RetailBillingProps> = ({ currentUser, statu
             </span>
           </div>
 
-          {/* 1. Order Channel / Source */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
-              Order Channel / Source
-            </label>
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { id: "SHOP", label: "Shop Walk-in", icon: "🏪" },
-                { id: "WHATSAPP", label: "WhatsApp", icon: "💬" },
-                { id: "WEBSITE", label: "Website", icon: "🌐" },
-              ].map((ch) => (
-                <button
-                  key={ch.id}
-                  type="button"
-                  onClick={() => setOrderChannel(ch.id as any)}
-                  className={`p-2 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
-                    orderChannel === ch.id
-                      ? "bg-amber-500 text-slate-950 border-amber-400 font-bold shadow-xs"
-                      : "bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700"
-                  }`}
-                >
-                  <span>{ch.icon}</span>
-                  <span className="truncate">{ch.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 2. Cashier & Salesperson Attribution for this sale */}
+          {/* Cashier & Salesperson Attribution for this sale */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">

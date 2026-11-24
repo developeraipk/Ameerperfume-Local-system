@@ -379,7 +379,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                   </p>
                 </div>
               </div>
-              <span className="text-xs text-slate-500 font-mono">All-Time Cumulative Live Inflow</span>
+              <span className="text-xs text-slate-500 font-mono">{periodLabelMap[selectedPeriod] || "Current Period"} Live Inflow</span>
             </div>
 
             {(() => {

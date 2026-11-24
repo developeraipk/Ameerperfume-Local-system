@@ -7454,66 +7454,132 @@ impl DatabaseManager {
             |r| r.get(0)
         ).unwrap_or(0);
 
-        // 10. Channel breakdown (Shop / WhatsApp / Website / Phone) - Normalized so walk-ins are unified
+        // 10. Channel breakdown (Shop / WhatsApp / Website) - True order counts & item unit summation
         let mut ch_stmt = conn.prepare(&format!("
             SELECT 
-                ch,
-                SUM(cnt) AS total_orders,
-                SUM(rev) AS total_revenue,
-                SUM(units) AS total_units
-            FROM (
-                SELECT 
-                    CASE 
-                        WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('SHOP', 'WALK_IN', 'COUNTER', 'STORE') THEN 'SHOP'
-                        WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('WHATSAPP', 'WA') THEN 'WHATSAPP'
-                        WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('WEBSITE', 'WEB', 'ONLINE') THEN 'WEBSITE'
-                        WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('PHONE', 'CALL') THEN 'PHONE'
-                        ELSE 'SHOP'
-                    END AS ch,
-                    COUNT(DISTINCT si.invoice_id) AS cnt,
-                    COALESCE(SUM(si.net_payable_paisa), 0) AS rev,
-                    COALESCE(SUM(sii.units), 0) AS units
-                FROM sales_invoices si
-                LEFT JOIN (
-                    SELECT invoice_id, SUM(quantity) AS units
-                    FROM sales_invoice_items
-                    GROUP BY invoice_id
-                ) sii ON si.invoice_id = sii.invoice_id
-                WHERE si.is_voided = 0 AND {}
-                GROUP BY ch
-
-                UNION ALL
-
-                SELECT 
-                    CASE 
-                        WHEN UPPER(channel) LIKE '%WHATSAPP%' THEN 'WHATSAPP'
-                        ELSE 'WEBSITE'
-                    END AS ch,
-                    COUNT(order_id) AS cnt,
-                    COALESCE(SUM(total_amount_paisa), 0) AS rev,
-                    COUNT(order_id) AS units
-                FROM online_orders
-                WHERE payment_status != 'RETURNED' AND {}
-                GROUP BY ch
-            )
+                CASE 
+                    WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('SHOP', 'WALK_IN', 'COUNTER', 'STORE') THEN 'SHOP'
+                    WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('WHATSAPP', 'WA') THEN 'WHATSAPP'
+                    WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('WEBSITE', 'WEB', 'ONLINE') THEN 'WEBSITE'
+                    WHEN UPPER(COALESCE(si.order_source, 'SHOP')) IN ('PHONE', 'CALL') THEN 'PHONE'
+                    ELSE 'SHOP'
+                END AS ch,
+                COUNT(DISTINCT si.invoice_id) AS cnt,
+                COALESCE(SUM(si.net_payable_paisa), 0) AS rev,
+                COALESCE(SUM(sii.units), 0) AS units
+            FROM sales_invoices si
+            LEFT JOIN (
+                SELECT invoice_id, SUM(quantity) AS units
+                FROM sales_invoice_items
+                GROUP BY invoice_id
+            ) sii ON si.invoice_id = sii.invoice_id
+            WHERE si.is_voided = 0 AND {}
             GROUP BY ch;
-        ", inv_cond_si, onl_cond)).map_err(|e| e.to_string())?;
+        ", inv_cond_si)).map_err(|e| e.to_string())?;
 
-        let mut channel_breakdown = Vec::new();
+        let mut shop_orders = 0i64;
+        let mut shop_rev = 0i64;
+        let mut shop_units = 0i64;
+
+        let mut wa_orders = 0i64;
+        let mut wa_rev = 0i64;
+        let mut wa_units = 0i64;
+
+        let mut web_orders = 0i64;
+        let mut web_rev = 0i64;
+        let mut web_units = 0i64;
+
         let ch_rows = ch_stmt.query_map([], |r| {
-            Ok(ChannelMetricDto {
-                channel: r.get(0)?,
-                order_count: r.get(1)?,
-                revenue_paisa: r.get(2)?,
-                total_units: r.get(3)?,
-            })
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
         }).map_err(|e| e.to_string())?;
 
-        for r in ch_rows {
-            if let Ok(c) = r {
-                channel_breakdown.push(c);
+        for r in ch_rows.flatten() {
+            let (ch, cnt, rev, units) = r;
+            if ch == "WHATSAPP" {
+                wa_orders += cnt;
+                wa_rev += rev;
+                wa_units += units;
+            } else if ch == "WEBSITE" {
+                web_orders += cnt;
+                web_rev += rev;
+                web_units += units;
+            } else {
+                shop_orders += cnt;
+                shop_rev += rev;
+                shop_units += units;
             }
         }
+
+        // Aggregate online orders parsing true item units from items_json
+        if let Ok(mut onl_stmt) = conn.prepare(&format!("
+            SELECT 
+                CASE 
+                    WHEN UPPER(channel) LIKE '%WHATSAPP%' THEN 'WHATSAPP'
+                    ELSE 'WEBSITE'
+                END AS ch,
+                total_amount_paisa,
+                items_json
+            FROM online_orders
+            WHERE payment_status != 'RETURNED' AND {};
+        ", onl_cond)) {
+            if let Ok(rows) = onl_stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            }) {
+                for r in rows.flatten() {
+                    let (ch, rev, items_json) = r;
+                    let mut order_units = 0i64;
+                    if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(&items_json) {
+                        for it in parsed {
+                            let qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+                            order_units += qty;
+                        }
+                    }
+                    if order_units == 0 {
+                        order_units = 1;
+                    }
+
+                    if ch == "WHATSAPP" {
+                        wa_orders += 1;
+                        wa_rev += rev;
+                        wa_units += order_units;
+                    } else {
+                        web_orders += 1;
+                        web_rev += rev;
+                        web_units += order_units;
+                    }
+                }
+            }
+        }
+
+        let channel_breakdown = vec![
+            ChannelMetricDto {
+                channel: "SHOP".to_string(),
+                order_count: shop_orders,
+                revenue_paisa: shop_rev,
+                total_units: shop_units,
+            },
+            ChannelMetricDto {
+                channel: "WHATSAPP".to_string(),
+                order_count: wa_orders,
+                revenue_paisa: wa_rev,
+                total_units: wa_units,
+            },
+            ChannelMetricDto {
+                channel: "WEBSITE".to_string(),
+                order_count: web_orders,
+                revenue_paisa: web_rev,
+                total_units: web_units,
+            },
+        ];
 
         // 11. Employee Sales Performance (Orders, units sold, revenue)
         let mut sp_stmt = conn.prepare(&format!("
@@ -8425,8 +8491,12 @@ impl DatabaseManager {
             PRAGMA foreign_keys = OFF;
         ");
 
-        // Clear all operational and demo tables cleanly
+        // Clear all operational and demo tables cleanly (100% full database wipe)
         let tables_to_clear = [
+            "online_order_payments",
+            "online_orders",
+            "wholesale_payments_upgraded",
+            "return_vouchers_upgraded",
             "return_voucher_items",
             "return_vouchers",
             "wholesale_customer_ledger",
@@ -8479,6 +8549,66 @@ impl DatabaseManager {
             let sql = format!("DELETE FROM {};", table);
             let _ = conn.execute(&sql, []);
         }
+
+        // Dynamically wipe ALL user tables from sqlite_master (preserving 'users' and system tables)
+        if let Ok(mut stmt) = conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'users' AND name != '_schema_migrations';") {
+            if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                for t in rows.flatten() {
+                    let sql = format!("DELETE FROM {};", t);
+                    let _ = conn.execute(&sql, []);
+                }
+            }
+        }
+        let _ = conn.execute("DELETE FROM sqlite_sequence;", []);
+
+        // Guarantee online_orders table exists
+        let _ = conn.execute("
+            CREATE TABLE IF NOT EXISTS online_orders (
+                order_id TEXT PRIMARY KEY NOT NULL,
+                order_number TEXT NOT NULL UNIQUE,
+                channel TEXT NOT NULL CHECK(channel IN ('WHATSAPP', 'WEBSITE')),
+                customer_name TEXT NOT NULL,
+                customer_phone TEXT NOT NULL,
+                shipping_address TEXT NOT NULL,
+                city TEXT NOT NULL,
+                items_json TEXT NOT NULL,
+                subtotal_paisa INTEGER NOT NULL DEFAULT 0,
+                delivery_charges_paisa INTEGER NOT NULL DEFAULT 0,
+                discount_paisa INTEGER NOT NULL DEFAULT 0,
+                total_amount_paisa INTEGER NOT NULL DEFAULT 0,
+                advance_paid_paisa INTEGER NOT NULL DEFAULT 0,
+                cod_balance_paisa INTEGER NOT NULL DEFAULT 0,
+                payment_status TEXT NOT NULL DEFAULT 'PENDING' CHECK(payment_status IN ('PENDING', 'PARTIAL', 'PAID', 'RETURNED')),
+                payment_custodian TEXT NOT NULL DEFAULT 'COURIER_COD' CHECK(payment_custodian IN ('COURIER_COD', 'STAFF_HANDLER', 'SETTLED', 'WA_STAFF_HANDLER', 'WEB_STAFF_HANDLER')),
+                courier_partner TEXT NOT NULL DEFAULT 'TCS Express',
+                tracking_number TEXT,
+                delivery_status TEXT NOT NULL DEFAULT 'BOOKED' CHECK(delivery_status IN ('BOOKED', 'DISPATCHED', 'IN_TRANSIT', 'DELIVERED', 'RETURNED', 'CANCELLED')),
+                collected_by TEXT,
+                collected_at TEXT,
+                collection_method TEXT,
+                collection_reference TEXT,
+                return_reason TEXT,
+                notes TEXT,
+                created_at TEXT NOT NULL,
+                created_by_user_id TEXT NOT NULL,
+                refund_amount_paisa INTEGER NOT NULL DEFAULT 0,
+                deduction_amount_paisa INTEGER NOT NULL DEFAULT 0,
+                refund_settlement_method TEXT
+            );
+        ", []);
+
+        // Guarantee online_order_payments table exists
+        let _ = conn.execute("
+            CREATE TABLE IF NOT EXISTS online_order_payments (
+                payment_id TEXT PRIMARY KEY NOT NULL,
+                order_id TEXT NOT NULL REFERENCES online_orders(order_id) ON DELETE CASCADE,
+                amount_paid_paisa INTEGER NOT NULL,
+                payment_method TEXT NOT NULL CHECK(payment_method IN ('CASH_ON_DELIVERY', 'EASYPAISA', 'JAZZCASH', 'BANK_TRANSFER', 'STAFF_HANDOVER')),
+                received_by_user_id TEXT NOT NULL,
+                reference_note TEXT,
+                created_at TEXT NOT NULL
+            );
+        ", []);
 
         // Guarantee employee_salary_payouts exists for subsequent operations
         let _ = conn.execute("

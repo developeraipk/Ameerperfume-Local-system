@@ -1058,9 +1058,15 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
               <span className="flex items-center gap-1">👤 Staff Handler:</span>
               <span className="text-amber-600 dark:text-amber-400">Rs. {formatRs(staffPendingPaisa)}</span>
             </div>
-            <div className="pt-1 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[10.5px] text-slate-500">
-              <span>💬 WA Staff: <strong className="text-slate-700 dark:text-slate-300">Rs. {formatRs(waStaffPendingPaisa)}</strong></span>
-              <span>🌐 Web Staff: <strong className="text-slate-700 dark:text-slate-300">Rs. {formatRs(webStaffPendingPaisa)}</strong></span>
+            <div className="pt-1.5 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-1 text-[11px] font-mono">
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                <span className="flex items-center gap-1">💬 WA Staff:</span>
+                <strong className="text-slate-800 dark:text-slate-200 font-bold">Rs. {formatRs(waStaffPendingPaisa)}</strong>
+              </div>
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                <span className="flex items-center gap-1">🌐 Web Staff:</span>
+                <strong className="text-slate-800 dark:text-slate-200 font-bold">Rs. {formatRs(webStaffPendingPaisa)}</strong>
+              </div>
             </div>
           </div>
         </div>

@@ -1535,13 +1535,18 @@ function saveFallbackOnlineOrders(orders: OnlineOrder[]): void {
 }
 
 export async function getOnlineOrders(): Promise<OnlineOrder[]> {
-  const fallback = getFallbackOnlineOrders();
-  const res = await safeInvoke<OnlineOrder[]>("get_online_orders", undefined, fallback);
-  if (res && Array.isArray(res) && res.length > 0) {
-    saveFallbackOnlineOrders(res);
-    return res;
+  if (isTauriEnvironment()) {
+    try {
+      const res = await safeInvoke<OnlineOrder[]>("get_online_orders");
+      if (Array.isArray(res)) {
+        saveFallbackOnlineOrders(res);
+        return res;
+      }
+    } catch (e) {
+      console.warn("get_online_orders IPC call failed, falling back to cached local storage:", e);
+    }
   }
-  return fallback;
+  return getFallbackOnlineOrders();
 }
 
 export async function createOnlineOrder(

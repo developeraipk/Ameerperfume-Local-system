@@ -82,11 +82,6 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OnlineOrder | null>(null);
 
-  // Print Slip Modal State
-  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
-  const [printModalOrder, setPrintModalOrder] = useState<OnlineOrder | null>(null);
-  const [printSlipFormat, setPrintSlipFormat] = useState<"THERMAL_80MM" | "A4">("THERMAL_80MM");
-
   // Attar Portion & Custom Rate Customizer State
   const [selectedAttarForOnline, setSelectedAttarForOnline] = useState<AttarProduct | null>(null);
   const [attarPortionUnit, setAttarPortionUnit] = useState<"TOLA" | "HALF_TOLA" | "QUARTER_TOLA" | "12ML" | "6ML" | "3ML" | "CUSTOM_TOLA" | "CUSTOM_ML">("TOLA");
@@ -660,6 +655,12 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       items = [];
     }
 
+    const isPrepaidOrStaff =
+      order.cod_balance_paisa <= 0 ||
+      order.payment_status === "PAID" ||
+      order.payment_custodian === "STAFF_HANDLER" ||
+      order.payment_custodian === "SETTLED";
+
     if (format === "THERMAL_80MM") {
       return `
         <div style="width: 72mm; margin: 0 auto; padding: 4px 2px; font-family: 'Segoe UI', -apple-system, Roboto, Arial, sans-serif; font-size: 11px; color: #000000; background: #ffffff; line-height: 1.35; -webkit-print-color-adjust: exact; print-color-adjust: exact;">
@@ -764,7 +765,17 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
             </div>
           </div>
 
-          <!-- PROMINENT CASH ON DELIVERY (COD) BOX -->
+          <!-- PAYMENT OR CASH ON DELIVERY (COD) CONTAINER -->
+          ${isPrepaidOrStaff ? `
+          <div style="margin: 7px 0; border: 2px solid #000000; padding: 7px 4px; text-align: center; background: #ffffff;">
+            <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.8px;">
+              ✓ PAID IN ADVANCE — PREPAID ORDER
+            </div>
+            <div style="font-size: 9px; font-weight: 800; text-transform: uppercase; margin-top: 2px;">
+              (DO NOT COLLECT CASH FROM CUSTOMER)
+            </div>
+          </div>
+          ` : `
           <div style="margin: 7px 0; border: 2.5px solid #000000; padding: 7px 4px; text-align: center; background: #ffffff;">
             <div style="font-size: 10.5px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.8px;">
               CASH ON DELIVERY (COD):
@@ -776,11 +787,15 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
               (Rider: Collect exact cash from customer)
             </div>
           </div>
+          `}
 
           <div style="border-top: 1.5px dashed #000000; margin: 6px 0 4px 0;"></div>
           <div style="text-align: center; font-size: 9.5px; font-weight: 600; line-height: 1.35;">
             Thank you for choosing Ameer Perfumes!<br/>
-            Complaints & Support: <strong>0310-0988522</strong>
+            Complaints & Support: <strong>0310-0988522</strong><br/>
+            <span style="font-size: 8.5px; font-weight: 700; color: #000000; margin-top: 2px; display: inline-block;">
+              Software Developed by Global Tech • Contact: 0312-9844284 / 0310-0988522
+            </span>
           </div>
         </div>
       `;
@@ -884,27 +899,27 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                 <span>Advance Paid:</span>
                 <span>Rs. ${(order.advance_paid_paisa / 100).toLocaleString()}</span>
               </div>
+              ${isPrepaidOrStaff ? `
+              <div style="display: flex; justify-content: space-between; font-size: 13.5px; font-weight: 800; color: #059669; border-top: 2px solid #059669; padding-top: 8px; margin-top: 6px;">
+                <span>PAYMENT STATUS:</span>
+                <span>PAID IN ADVANCE (DO NOT COLLECT CASH)</span>
+              </div>
+              ` : `
               <div style="display: flex; justify-content: space-between; font-size: 16px; font-weight: 800; color: #b45309; border-top: 2px solid #b45309; padding-top: 8px; margin-top: 6px;">
                 <span>CASH ON DELIVERY (COD):</span>
                 <span>Rs. ${(order.cod_balance_paisa / 100).toLocaleString()}</span>
               </div>
+              `}
             </div>
           </div>
 
-          <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8;">
+          <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; display: flex; justify-content: space-between; font-size: 10px; color: #64748b;">
             <div>Ameer Perfumes ERP • Official E-Commerce Shipping Dispatch Document</div>
-            <div>Support: 0310 0988522 • Software by Global Tech</div>
+            <div>Software Developed by Global Tech • Contact: 0312-9844284 / 0310-0988522</div>
           </div>
         </div>
       `;
     }
-  };
-
-  // Open Print Slip Modal
-  const openPrintSlipModal = (order: OnlineOrder) => {
-    setPrintModalOrder(order);
-    setPrintSlipFormat("THERMAL_80MM");
-    setIsPrintModalOpen(true);
   };
 
   // Execute native print targeting correct container
@@ -1367,13 +1382,13 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                       </Button>
                     )}
 
-                    {/* Unified Professional Print Slip Button */}
+                    {/* Unified Direct Print Slip Button (Direct Native Print Dialog) */}
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => openPrintSlipModal(o)}
+                      onClick={() => executePrintSlip(o, "THERMAL_80MM")}
                       className="h-7 px-2.5 text-[11px] font-bold border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10 flex items-center gap-1 cursor-pointer"
-                      title="Print Shipping Dispatch Slip (Choose 80mm Thermal or A4 Consignment Note)"
+                      title="Direct Print 80mm Shipping Dispatch Slip"
                     >
                       <Printer className="w-3 h-3 text-amber-600 dark:text-amber-400" />
                       <span>Print Slip</span>
@@ -2550,134 +2565,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
         );
       })()}
 
-      {/* ========================================================================= */}
-      {/* MODAL 5: PRINT DISPATCH SLIP PREVIEW & SELECTOR (THERMAL VS A4) */}
-      {/* ========================================================================= */}
-      {isPrintModalOpen && printModalOrder && (
-        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            {/* Modal Header */}
-            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950">
-              <div className="flex items-center gap-2.5">
-                <Printer className="w-5 h-5 text-amber-500" />
-                <div>
-                  <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                    Print Shipping Dispatch Slip — Preview
-                  </h2>
-                  <p className="text-[11px] text-slate-500 font-mono">
-                    Order: {printModalOrder.order_number} • Consignee: {printModalOrder.customer_name} ({printModalOrder.customer_phone})
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  setIsPrintModalOpen(false);
-                  setPrintModalOrder(null);
-                }}
-                className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {/* Modal Body: Format Selector & Preview */}
-            <div className="p-5 overflow-y-auto space-y-4 flex-1">
-              {/* Format Selector */}
-              <div>
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-2">
-                  Select Output Print Format:
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setPrintSlipFormat("THERMAL_80MM")}
-                    className={`p-3 rounded-xl border flex items-center justify-center gap-2.5 font-bold cursor-pointer transition-all ${
-                      printSlipFormat === "THERMAL_80MM"
-                        ? "bg-amber-500/15 border-amber-500 text-amber-900 dark:text-amber-300 ring-2 ring-amber-500/40 shadow-xs"
-                        : "bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300"
-                    }`}
-                  >
-                    <Printer className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                    <div className="text-left">
-                      <div className="text-xs font-bold">Thermal Slip (80mm)</div>
-                      <div className="text-[10px] font-normal text-slate-500">Roll receipt for courier parcel sticking</div>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setPrintSlipFormat("A4")}
-                    className={`p-3 rounded-xl border flex items-center justify-center gap-2.5 font-bold cursor-pointer transition-all ${
-                      printSlipFormat === "A4"
-                        ? "bg-amber-500/15 border-amber-500 text-amber-900 dark:text-amber-300 ring-2 ring-amber-500/40 shadow-xs"
-                        : "bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300"
-                    }`}
-                  >
-                    <FileSpreadsheet className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                    <div className="text-left">
-                      <div className="text-xs font-bold">A4 Dispatch Consignment Note</div>
-                      <div className="text-[10px] font-normal text-slate-500">Official sheet with complete line items & courier box</div>
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              {/* Live Preview Container */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
-                    Document Preview ({printSlipFormat === "THERMAL_80MM" ? "80mm Thermal" : "A4 Sheet"}):
-                  </span>
-                  <span className="text-[10px] font-mono text-slate-500">
-                    Live Formatted Rendering
-                  </span>
-                </div>
-                <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl bg-slate-200/50 dark:bg-slate-950/60 p-4 max-h-[46vh] overflow-y-auto flex justify-center">
-                  <div
-                    className="bg-white text-slate-900 shadow-md rounded p-4 w-full"
-                    style={{
-                      maxWidth: printSlipFormat === "THERMAL_80MM" ? "360px" : "100%",
-                      fontFamily: printSlipFormat === "THERMAL_80MM" ? "monospace" : "sans-serif",
-                    }}
-                    dangerouslySetInnerHTML={{
-                      __html: generateShippingSlipHtml(printModalOrder, printSlipFormat),
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setIsPrintModalOpen(false);
-                  setPrintModalOrder(null);
-                }}
-                className="cursor-pointer"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="primary"
-                size="sm"
-                onClick={() => {
-                  executePrintSlip(printModalOrder, printSlipFormat);
-                  setIsPrintModalOpen(false);
-                }}
-                className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold flex items-center gap-2 cursor-pointer shadow-sm px-5"
-              >
-                <Printer className="w-4 h-4 text-slate-950" />
-                <span>Print Dispatch Slip ({printSlipFormat === "THERMAL_80MM" ? "80mm" : "A4"})</span>
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

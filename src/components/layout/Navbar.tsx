@@ -172,7 +172,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     if (!confirmed) return;
     try {
       await resetDatabaseForTesting();
-      localStorage.removeItem("ameer_promotional_offers_v1");
+      localStorage.clear();
+      sessionStorage.clear();
       localStorage.setItem("ameer_database_cleared", "true");
       alert("✅ Database has been successfully reset to factory state. The application will now reload.");
       window.location.reload();
@@ -184,7 +185,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header
       ref={navRef}
-      className="h-20 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md px-2.5 sm:px-4 flex items-center justify-between gap-1.5 sm:gap-2.5 select-none sticky top-0 z-50 shadow-sm w-full max-w-full overflow-hidden sm:overflow-visible"
+      className="h-20 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md px-2.5 sm:px-4 flex items-center justify-between gap-1.5 sm:gap-2 select-none sticky top-0 z-50 shadow-sm w-full max-w-full overflow-visible"
     >
       {/* Left: Luxury Brand Emblem & Store Info with Quick Utilities (Theme & Refresh) neatly stacked underneath */}
       <div className="flex flex-col justify-center shrink-0 select-none py-1">
@@ -440,52 +441,52 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Quick Primary Tab: POS Retail Billing */}
             <button
               onClick={() => handleSelectScreen("POS")}
-              className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+              className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                 activeScreen === "POS"
                   ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
                   : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
               }`}
             >
-              <ShoppingBag className="w-4 h-4 shrink-0" />
+              <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
               <span>POS</span>
             </button>
 
             {/* Quick Primary Tab: Returns */}
             <button
               onClick={() => handleSelectScreen("RETURNS")}
-              className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+              className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                 activeScreen === "RETURNS"
                   ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
                   : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
               }`}
             >
-              <RotateCcw className="w-4 h-4 text-rose-500 shrink-0" />
+              <RotateCcw className="w-3.5 h-3.5 text-rose-500 shrink-0" />
               <span>Returns</span>
             </button>
 
             {/* Quick Primary Tab: Attar Bar */}
             <button
               onClick={() => handleSelectScreen("ATTAR")}
-              className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+              className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                 activeScreen === "ATTAR"
                   ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
                   : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
               }`}
             >
-              <Droplet className="w-4 h-4 text-amber-500 shrink-0" />
+              <Droplet className="w-3.5 h-3.5 text-amber-500 shrink-0" />
               <span>Attar</span>
             </button>
 
             {/* Quick Primary Tab: Perfumes Catalog */}
             <button
               onClick={() => handleSelectScreen("CATALOG")}
-              className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+              className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                 activeScreen === "CATALOG"
                   ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
                   : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
               }`}
             >
-              <Package className="w-4 h-4 text-indigo-500 dark:text-indigo-400 shrink-0" />
+              <Package className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
               <span>Perfumes</span>
             </button>
 
@@ -493,14 +494,14 @@ export const Navbar: React.FC<NavbarProps> = ({
             {isSuperAdmin && (
               <button
                 onClick={() => handleSelectScreen("OWNER_DASHBOARD")}
-                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+                className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                   activeScreen === "OWNER_DASHBOARD"
                     ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
                     : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
                 }`}
                 title="Executive Dashboard"
               >
-                <LayoutDashboard className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                <LayoutDashboard className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
                 <span>Dashboard</span>
               </button>
             )}
@@ -509,7 +510,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div className="relative">
               <button
                 onClick={() => setOpenDropdown(openDropdown === "commercial" ? null : "commercial")}
-                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+                className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                   isCommercialActive
                     ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
                     : openDropdown === "commercial"
@@ -518,9 +519,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 }`}
                 title="B2B Wholesale & Online Commerce Hub"
               >
-                <Truck className="w-4 h-4 text-blue-500 shrink-0" />
+                <Truck className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                 <span>Commercial Sales</span>
-                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${openDropdown === "commercial" ? "rotate-180" : ""}`} />
+                <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${openDropdown === "commercial" ? "rotate-180" : ""}`} />
               </button>
 
               {openDropdown === "commercial" && (
@@ -565,7 +566,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div className="relative">
               <button
                 onClick={() => setOpenDropdown(openDropdown === "finance" ? null : "finance")}
-                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+                className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                   isFinanceActive
                     ? "bg-amber-500/15 text-amber-800 dark:text-amber-200 border border-amber-500/30 font-bold shadow-xs"
                     : openDropdown === "finance"
@@ -574,9 +575,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 }`}
                 title="Finance Suite"
               >
-                <Banknote className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <Banknote className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                 <span>Finance</span>
-                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${openDropdown === "finance" ? "rotate-180" : ""}`} />
+                <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${openDropdown === "finance" ? "rotate-180" : ""}`} />
               </button>
 
               {openDropdown === "finance" && (
@@ -634,7 +635,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <div className="relative">
                 <button
                   onClick={() => setOpenDropdown(openDropdown === "system" ? null : "system")}
-                  className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+                  className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                     isSystemActive
                       ? "bg-amber-500/15 text-amber-800 dark:text-amber-200 border border-amber-500/30 font-bold shadow-xs"
                       : openDropdown === "system"
@@ -643,9 +644,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                   }`}
                   title="System Administration"
                 >
-                  <SlidersHorizontal className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0" />
                   <span>Admin</span>
-                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${openDropdown === "system" ? "rotate-180" : ""}`} />
+                  <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${openDropdown === "system" ? "rotate-180" : ""}`} />
                 </button>
 
                 {openDropdown === "system" && (
@@ -735,7 +736,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       </nav>
 
       {/* Right: Active Staff Profile and Lock / Logout */}
-      <div className="flex items-center gap-1.5 shrink-0 z-40 bg-white/95 dark:bg-slate-950/95 relative mr-0.5 sm:mr-1">
+      <div className="flex items-center gap-1.5 shrink-0 z-40 bg-white/95 dark:bg-slate-950/95 relative mr-1 sm:mr-2 min-w-fit">
         {/* User Profile & Action Dropdown (Lock Terminal, Logout, User Security) */}
         {currentUser && (
           <div className="relative">

@@ -119,7 +119,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     const words = cleanName.split(/\s+/).filter(Boolean);
     if (words.length <= 1) {
       return (
-        <div className="font-bold text-slate-900 dark:text-slate-100 text-xs leading-tight truncate max-w-[115px]" title={cleanName}>
+        <div className="font-bold text-slate-900 dark:text-slate-100 text-[11.5px] leading-tight truncate max-w-[95px]" title={cleanName}>
           {cleanName}
         </div>
       );
@@ -127,12 +127,12 @@ export const Navbar: React.FC<NavbarProps> = ({
     const firstLine = words.slice(0, 2).join(" ");
     const remainingLine = words.slice(2).join(" ");
     return (
-      <div className="flex flex-col leading-tight max-w-[115px]" title={cleanName}>
-        <span className="font-bold text-slate-900 dark:text-slate-100 text-xs truncate">
+      <div className="flex flex-col leading-tight max-w-[95px]" title={cleanName}>
+        <span className="font-bold text-slate-900 dark:text-slate-100 text-[11.5px] truncate">
           {firstLine}
         </span>
         {remainingLine && (
-          <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 truncate">
+          <span className="text-[9.5px] font-semibold text-slate-500 dark:text-slate-400 truncate">
             {remainingLine}
           </span>
         )}
@@ -184,7 +184,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header
       ref={navRef}
-      className="h-20 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md px-3 sm:px-5 pr-4 sm:pr-8 flex items-center justify-between gap-2 sm:gap-3 select-none sticky top-0 z-50 shadow-sm w-full max-w-full overflow-visible"
+      className="h-20 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md px-2.5 sm:px-4 flex items-center justify-between gap-1.5 sm:gap-2.5 select-none sticky top-0 z-50 shadow-sm w-full max-w-full overflow-hidden sm:overflow-visible"
     >
       {/* Left: Luxury Brand Emblem & Store Info with Quick Utilities (Theme & Refresh) neatly stacked underneath */}
       <div className="flex flex-col justify-center shrink-0 select-none py-1">
@@ -220,7 +220,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Center: Navigation Bar (Role-Filtered RBAC, Professional & Spacious) */}
       <nav
-        className="flex items-center gap-1.5 xl:gap-2 bg-slate-100/90 dark:bg-slate-900/90 p-1.5 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs relative overflow-visible flex-nowrap shrink"
+        className="flex items-center gap-1 xl:gap-1.5 bg-slate-100/90 dark:bg-slate-900/90 p-1 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs relative overflow-visible flex-nowrap shrink"
       >
         {/* 1. OWNER ROLE VIEW: POS, Wholesale, Attar, Perfumes, Dashboard, Reports */}
         {isOwner && (
@@ -440,52 +440,52 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Quick Primary Tab: POS Retail Billing */}
             <button
               onClick={() => handleSelectScreen("POS")}
-              className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-xl text-xs sm:text-[13px] font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                 activeScreen === "POS"
                   ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
                   : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
               }`}
             >
-              <ShoppingBag className="w-4 h-4 shrink-0" />
+              <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
               <span>POS</span>
             </button>
 
             {/* Quick Primary Tab: Returns */}
             <button
               onClick={() => handleSelectScreen("RETURNS")}
-              className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-xl text-xs sm:text-[13px] font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                 activeScreen === "RETURNS"
                   ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
                   : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
               }`}
             >
-              <RotateCcw className="w-4 h-4 text-rose-500 shrink-0" />
+              <RotateCcw className="w-3.5 h-3.5 text-rose-500 shrink-0" />
               <span>Returns</span>
             </button>
 
             {/* Quick Primary Tab: Attar Bar */}
             <button
               onClick={() => handleSelectScreen("ATTAR")}
-              className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-xl text-xs sm:text-[13px] font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                 activeScreen === "ATTAR"
                   ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
                   : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
               }`}
             >
-              <Droplet className="w-4 h-4 text-amber-500 shrink-0" />
+              <Droplet className="w-3.5 h-3.5 text-amber-500 shrink-0" />
               <span>Attar</span>
             </button>
 
             {/* Quick Primary Tab: Perfumes Catalog */}
             <button
               onClick={() => handleSelectScreen("CATALOG")}
-              className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-xl text-xs sm:text-[13px] font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                 activeScreen === "CATALOG"
                   ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
                   : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
               }`}
             >
-              <Package className="w-4 h-4 text-indigo-500 dark:text-indigo-400 shrink-0" />
+              <Package className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
               <span>Perfumes</span>
             </button>
 
@@ -493,14 +493,14 @@ export const Navbar: React.FC<NavbarProps> = ({
             {isSuperAdmin && (
               <button
                 onClick={() => handleSelectScreen("OWNER_DASHBOARD")}
-                className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-xl text-xs sm:text-[13px] font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                   activeScreen === "OWNER_DASHBOARD"
                     ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
                     : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
                 }`}
                 title="Executive Dashboard"
               >
-                <LayoutDashboard className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                <LayoutDashboard className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
                 <span>Dashboard</span>
               </button>
             )}
@@ -509,7 +509,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div className="relative">
               <button
                 onClick={() => setOpenDropdown(openDropdown === "commercial" ? null : "commercial")}
-                className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-xl text-xs sm:text-[13px] font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                   isCommercialActive
                     ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
                     : openDropdown === "commercial"
@@ -518,9 +518,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 }`}
                 title="B2B Wholesale & Online Commerce Hub"
               >
-                <Truck className="w-4 h-4 text-blue-500 shrink-0" />
+                <Truck className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                 <span>Commercial Sales</span>
-                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${openDropdown === "commercial" ? "rotate-180" : ""}`} />
+                <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${openDropdown === "commercial" ? "rotate-180" : ""}`} />
               </button>
 
               {openDropdown === "commercial" && (
@@ -565,7 +565,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div className="relative">
               <button
                 onClick={() => setOpenDropdown(openDropdown === "finance" ? null : "finance")}
-                className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-xl text-xs sm:text-[13px] font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                   isFinanceActive
                     ? "bg-amber-500/15 text-amber-800 dark:text-amber-200 border border-amber-500/30 font-bold shadow-xs"
                     : openDropdown === "finance"
@@ -574,9 +574,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 }`}
                 title="Finance Suite"
               >
-                <Banknote className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <Banknote className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                 <span>Finance</span>
-                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${openDropdown === "finance" ? "rotate-180" : ""}`} />
+                <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${openDropdown === "finance" ? "rotate-180" : ""}`} />
               </button>
 
               {openDropdown === "finance" && (
@@ -634,7 +634,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <div className="relative">
                 <button
                   onClick={() => setOpenDropdown(openDropdown === "system" ? null : "system")}
-                  className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-xl text-xs sm:text-[13px] font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
+                  className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-150 select-none whitespace-nowrap shrink-0 ${
                     isSystemActive
                       ? "bg-amber-500/15 text-amber-800 dark:text-amber-200 border border-amber-500/30 font-bold shadow-xs"
                       : openDropdown === "system"
@@ -643,9 +643,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                   }`}
                   title="System Administration"
                 >
-                  <SlidersHorizontal className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0" />
                   <span>Admin</span>
-                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${openDropdown === "system" ? "rotate-180" : ""}`} />
+                  <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${openDropdown === "system" ? "rotate-180" : ""}`} />
                 </button>
 
                 {openDropdown === "system" && (
@@ -735,19 +735,19 @@ export const Navbar: React.FC<NavbarProps> = ({
       </nav>
 
       {/* Right: Active Staff Profile and Lock / Logout */}
-      <div className="flex items-center gap-2 shrink-0 z-40 bg-white/95 dark:bg-slate-950/95 relative mr-1 sm:mr-3">
+      <div className="flex items-center gap-1.5 shrink-0 z-40 bg-white/95 dark:bg-slate-950/95 relative mr-0.5 sm:mr-1">
         {/* User Profile & Action Dropdown (Lock Terminal, Logout, User Security) */}
         {currentUser && (
           <div className="relative">
             <button
               type="button"
               onClick={() => setOpenDropdown(openDropdown === "user" ? null : "user")}
-              className={`flex items-center gap-2 bg-slate-100/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800/80 px-2.5 py-1.5 rounded-2xl shadow-xs shrink-0 cursor-pointer transition-colors ${
+              className={`flex items-center gap-1.5 bg-slate-100/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800/80 px-2 py-1 rounded-xl shadow-xs shrink-0 cursor-pointer transition-colors ${
                 openDropdown === "user" ? "border-amber-500 ring-2 ring-amber-500/20" : "hover:border-amber-400/60"
               }`}
               title="Click to view user profile, Lock [F10], Logout, or Reset DB"
             >
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-600 via-amber-500 to-amber-300 text-slate-950 font-black text-xs flex items-center justify-center shadow-xs select-none shrink-0">
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-600 via-amber-500 to-amber-300 text-slate-950 font-black text-[11px] flex items-center justify-center shadow-xs select-none shrink-0">
                 {currentUser.full_name
                   .replace(/\s*\([^)]*\)/g, "")
                   .split(" ")
@@ -757,15 +757,15 @@ export const Navbar: React.FC<NavbarProps> = ({
                   .join("")
                   .toUpperCase() || "MA"}
               </div>
-              <div className="text-left shrink-0 max-w-[115px] hidden sm:block">
+              <div className="text-left shrink-0 max-w-[95px] hidden sm:block">
                 {renderFormattedName(currentUser.full_name)}
-                <div className="text-[10px] mt-0.5">
-                  <Badge variant={getRoleBadgeVariant(currentUser.role)} className="py-0 px-1.5 text-[9px] font-semibold leading-normal">
+                <div className="text-[9px] mt-0.5">
+                  <Badge variant={getRoleBadgeVariant(currentUser.role)} className="py-0 px-1 text-[8.5px] font-semibold leading-tight">
                     {formatRoleName(currentUser.role)}
                   </Badge>
                 </div>
               </div>
-              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${openDropdown === "user" ? "rotate-180 text-amber-500" : ""}`} />
+              <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform shrink-0 ${openDropdown === "user" ? "rotate-180 text-amber-500" : ""}`} />
             </button>
 
             {/* Dropdown Menu */}

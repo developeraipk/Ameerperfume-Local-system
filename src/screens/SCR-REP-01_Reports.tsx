@@ -50,6 +50,7 @@ import {
   Briefcase,
   Clock,
   Globe,
+  Calendar,
 } from "lucide-react";
 
 interface ReportsProps {
@@ -1438,50 +1439,25 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </p>
         </div>
 
-        {/* Global Period Selector, Channel Filter & Primary Actions */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          {/* Period Filter Buttons */}
+        {/* Global Period Selector, Channel Filter & Primary Actions Aligned Right */}
+        <div className="flex flex-wrap items-center justify-end gap-2.5">
+          {/* Period Filter Dropdown */}
           <div className="flex items-center bg-slate-200 dark:bg-slate-900 p-1 rounded-xl border border-slate-300 dark:border-slate-800 text-xs shrink-0">
-            <button
-              onClick={() => setPeriod("TODAY")}
-              className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                period === "TODAY" ? "bg-amber-500 text-slate-950 shadow-xs" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-              }`}
+            <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase px-2 font-mono flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 text-amber-500" />
+              <span>Period:</span>
+            </span>
+            <select
+              value={period}
+              onChange={(e) => setPeriod(e.target.value as PeriodFilter)}
+              className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-bold text-xs rounded-lg px-2.5 py-1 border border-slate-300 dark:border-slate-700 outline-none cursor-pointer focus:ring-1 focus:ring-amber-500"
             >
-              Daily (Today)
-            </button>
-            <button
-              onClick={() => setPeriod("WEEK")}
-              className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                period === "WEEK" ? "bg-amber-500 text-slate-950 shadow-xs" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-              }`}
-            >
-              Weekly
-            </button>
-            <button
-              onClick={() => setPeriod("MONTH")}
-              className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                period === "MONTH" ? "bg-amber-500 text-slate-950 shadow-xs" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-              }`}
-            >
-              Monthly
-            </button>
-            <button
-              onClick={() => setPeriod("YEAR")}
-              className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                period === "YEAR" ? "bg-amber-500 text-slate-950 shadow-xs" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-              }`}
-            >
-              Yearly
-            </button>
-            <button
-              onClick={() => setPeriod("ALL")}
-              className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                period === "ALL" ? "bg-amber-500 text-slate-950 shadow-xs" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-              }`}
-            >
-              All Records
-            </button>
+              <option value="TODAY">Daily (Today)</option>
+              <option value="WEEK">Weekly</option>
+              <option value="MONTH">Monthly</option>
+              <option value="YEAR">Yearly</option>
+              <option value="ALL">All Records</option>
+            </select>
           </div>
 
           {/* Channel Filter Dropdown (All, POS, Online Orders, Wholesale) */}

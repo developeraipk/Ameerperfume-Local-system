@@ -369,7 +369,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </>
         )}
 
-        {/* 2. CASHIER OPERATOR VIEW: POS Counter, Returns, Attar Bar, Perfumes, Wholesale */}
+        {/* 2. CASHIER OPERATOR VIEW: POS Counter, Attar Bar, Perfumes, Returns, Expenses (Wholesale & Online Orders hidden for Cashiers) */}
         {isCashier && (
           <>
             <button
@@ -383,59 +383,6 @@ export const Navbar: React.FC<NavbarProps> = ({
               <ShoppingBag className="w-4 h-4 shrink-0" />
               <span>POS</span>
             </button>
-
-            {/* Consolidated Dropdown: Commercial Sales (Wholesale & Online Orders) */}
-            <div className="relative">
-              <button
-                onClick={() => setOpenDropdown(openDropdown === "commercial" ? null : "commercial")}
-                className={`flex items-center gap-1.5 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-all duration-150 select-none ${
-                  isCommercialActive
-                    ? "bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50 scale-[1.01]"
-                    : openDropdown === "commercial"
-                    ? "bg-slate-200/80 dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs"
-                    : "text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800/90 hover:shadow-xs active:scale-[0.98]"
-                }`}
-                title="B2B Wholesale & Online Commerce Hub"
-              >
-                <Truck className="w-4 h-4 text-blue-500 shrink-0" />
-                <span>Commercial Sales</span>
-                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${openDropdown === "commercial" ? "rotate-180" : ""}`} />
-              </button>
-
-              {openDropdown === "commercial" && (
-                <div className="absolute top-full left-0 mt-2 w-64 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-2xl p-2 z-[999] animate-in fade-in zoom-in-95 duration-150">
-                  <button
-                    onClick={() => handleSelectScreen("WHOLESALE")}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors text-left cursor-pointer ${
-                      activeScreen === "WHOLESALE"
-                        ? "bg-amber-500 text-slate-950 font-semibold"
-                        : "text-slate-700 dark:text-slate-300 hover:bg-amber-500/10 hover:text-amber-900 dark:hover:text-amber-200"
-                    }`}
-                  >
-                    <Briefcase className="w-4 h-4 text-blue-500 shrink-0" />
-                    <div>
-                      <div className="font-semibold text-slate-900 dark:text-slate-100">Wholesale (B2B)</div>
-                      <div className="text-[10px] opacity-75">Bulk invoicing & customer ledger</div>
-                    </div>
-                  </button>
-
-                  <button
-                    onClick={() => handleSelectScreen("ONLINE_ORDERS")}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors text-left cursor-pointer ${
-                      activeScreen === "ONLINE_ORDERS"
-                        ? "bg-amber-500 text-slate-950 font-semibold"
-                        : "text-slate-700 dark:text-slate-300 hover:bg-amber-500/10 hover:text-amber-900 dark:hover:text-amber-200"
-                    }`}
-                  >
-                    <Globe className="w-4 h-4 text-emerald-500 shrink-0" />
-                    <div>
-                      <div className="font-semibold text-slate-900 dark:text-slate-100">Online Orders Hub</div>
-                      <div className="text-[10px] opacity-75">WhatsApp & Web orders, COD dispatch</div>
-                    </div>
-                  </button>
-                </div>
-              )}
-            </div>
 
             <button
               onClick={() => handleSelectScreen("ATTAR")}

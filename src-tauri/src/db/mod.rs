@@ -833,6 +833,10 @@ impl DatabaseManager {
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_online_orders_channel ON online_orders(channel);", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_online_orders_status ON online_orders(delivery_status);", []);
 
+        let _ = conn.execute("ALTER TABLE online_orders ADD COLUMN refund_amount_paisa INTEGER NOT NULL DEFAULT 0;", []);
+        let _ = conn.execute("ALTER TABLE online_orders ADD COLUMN deduction_amount_paisa INTEGER NOT NULL DEFAULT 0;", []);
+        let _ = conn.execute("ALTER TABLE online_orders ADD COLUMN refund_settlement_method TEXT;", []);
+
         Ok((current_version.max(231), current_version < 231))
     }
 
@@ -7175,8 +7179,8 @@ impl DatabaseManager {
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 WHERE UPPER(oop.payment_method) = 'CASH' AND {}
                 UNION ALL
-                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
-                WHERE oo.advance_paid_paisa > 0 AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH' AND oo.payment_status != 'RETURNED' AND {}
+                SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
+                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH' AND {}
             );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
             [],
             |r| r.get(0)
@@ -7203,8 +7207,8 @@ impl DatabaseManager {
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%') AND {}
                 UNION ALL
-                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
-                WHERE oo.advance_paid_paisa > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%') AND oo.payment_status != 'RETURNED' AND {}
+                SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
+                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%') AND {}
             );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
             [],
             |r| r.get(0)
@@ -7231,8 +7235,8 @@ impl DatabaseManager {
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%') AND {}
                 UNION ALL
-                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
-                WHERE oo.advance_paid_paisa > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%') AND oo.payment_status != 'RETURNED' AND {}
+                SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
+                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%') AND {}
             );", inv_cond_si, wp_cond_wp, onl_pay_cond, onl_cond),
             [],
             |r| r.get(0)
@@ -7329,8 +7333,8 @@ impl DatabaseManager {
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 WHERE UPPER(oop.payment_method) = 'CASH'
                 UNION ALL
-                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
-                WHERE oo.advance_paid_paisa > 0 AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH' AND oo.payment_status != 'RETURNED'
+                SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
+                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH'
             );",
             [],
             |r| r.get(0)
@@ -7357,8 +7361,8 @@ impl DatabaseManager {
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%')
                 UNION ALL
-                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
-                WHERE oo.advance_paid_paisa > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%') AND oo.payment_status != 'RETURNED'
+                SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
+                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%')
             );",
             [],
             |r| r.get(0)
@@ -7385,8 +7389,8 @@ impl DatabaseManager {
                 SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%')
                 UNION ALL
-                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
-                WHERE oo.advance_paid_paisa > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%') AND oo.payment_status != 'RETURNED'
+                SELECT (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) AS amount_paisa FROM online_orders oo
+                WHERE (oo.advance_paid_paisa - COALESCE(oo.refund_amount_paisa, 0)) > 0 AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%')
             );",
             [],
             |r| r.get(0)
@@ -8641,7 +8645,8 @@ impl DatabaseManager {
                    discount_paisa, total_amount_paisa, advance_paid_paisa, cod_balance_paisa,
                    payment_status, payment_custodian, courier_partner, tracking_number,
                    delivery_status, collected_by, collected_at, collection_method,
-                   collection_reference, return_reason, notes, created_at, created_by_user_id
+                   collection_reference, return_reason, notes, created_at, created_by_user_id,
+                   COALESCE(refund_amount_paisa, 0), COALESCE(deduction_amount_paisa, 0), refund_settlement_method
             FROM online_orders
             ORDER BY created_at DESC;
         ").map_err(|e| e.to_string())?;
@@ -8675,6 +8680,9 @@ impl DatabaseManager {
                 notes: r.get(24)?,
                 created_at: r.get(25)?,
                 created_by_user_id: r.get(26)?,
+                refund_amount_paisa: Some(r.get(27)?),
+                deduction_amount_paisa: Some(r.get(28)?),
+                refund_settlement_method: r.get(29)?,
             })
         }).map_err(|e| e.to_string())?;
 
@@ -8816,6 +8824,9 @@ impl DatabaseManager {
             notes: payload.notes.clone(),
             created_at: now_str,
             created_by_user_id: payload.created_by_user_id.clone(),
+            refund_amount_paisa: Some(0),
+            deduction_amount_paisa: Some(0),
+            refund_settlement_method: None,
         })
     }
 
@@ -8913,16 +8924,26 @@ impl DatabaseManager {
             }
         }
 
+        let refund_amt = payload.refund_amount_paisa.unwrap_or(0);
+        let deduct_amt = payload.deduction_amount_paisa.unwrap_or(0);
+        let refund_method = payload.refund_settlement_method.clone().unwrap_or_else(|| "CASH".to_string());
+
         tx.execute("
             UPDATE online_orders
             SET delivery_status = 'RETURNED_RTO',
                 payment_status = 'RETURNED',
                 payment_custodian = 'RETURNED',
                 cod_balance_paisa = 0,
-                return_reason = ?
+                return_reason = ?,
+                refund_amount_paisa = ?,
+                deduction_amount_paisa = ?,
+                refund_settlement_method = ?
             WHERE order_id = ?;
         ", rusqlite::params![
             payload.return_reason,
+            refund_amt,
+            deduct_amt,
+            refund_method,
             payload.order_id,
         ]).map_err(|e| format!("Failed to mark return: {}", e))?;
 
@@ -8987,6 +9008,9 @@ pub struct OnlineOrderDto {
     pub notes: Option<String>,
     pub created_at: String,
     pub created_by_user_id: String,
+    pub refund_amount_paisa: Option<i64>,
+    pub deduction_amount_paisa: Option<i64>,
+    pub refund_settlement_method: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -9025,6 +9049,9 @@ pub struct MarkOnlineReturnPayload {
     pub order_id: String,
     pub return_reason: String,
     pub user_id: String,
+    pub refund_amount_paisa: Option<i64>,
+    pub deduction_amount_paisa: Option<i64>,
+    pub refund_settlement_method: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -1374,6 +1374,9 @@ export interface OnlineOrder {
   notes?: string | null;
   created_at: string;
   created_by_user_id: string;
+  refund_amount_paisa?: number;
+  deduction_amount_paisa?: number;
+  refund_settlement_method?: string | null;
 }
 
 export interface CreateOnlineOrderPayload {
@@ -1409,4 +1412,7 @@ export interface MarkOnlineReturnPayload {
   order_id: string;
   return_reason: string;
   user_id: string;
+  refund_amount_paisa?: number;
+  deduction_amount_paisa?: number;
+  refund_settlement_method?: string;
 }

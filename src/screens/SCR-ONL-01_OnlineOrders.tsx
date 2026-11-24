@@ -66,6 +66,15 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const [filterTab, setFilterTab] = useState<ChannelFilter>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Pagination State (Show latest 10 by default)
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const pageSize = 10;
+
+  // Reset page when filter or search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterTab, searchQuery]);
+
   // Modals state
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
   const [isCollectModalOpen, setIsCollectModalOpen] = useState(false);
@@ -111,8 +120,11 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const [collectReference, setCollectReference] = useState("");
   const [collectNotes, setCollectNotes] = useState("");
 
-  // Return Form State
+  // Return & Cancellation Refund Form State
   const [returnReason, setReturnReason] = useState("Customer refused delivery / unreachable");
+  const [refundMode, setRefundMode] = useState<"FULL" | "PARTIAL" | "NONE">("FULL");
+  const [refundDeductionRupees, setRefundDeductionRupees] = useState("0");
+  const [refundPaymentMethod, setRefundPaymentMethod] = useState("CASH");
 
   // Status Update State
   const [updateDeliveryStatus, setUpdateDeliveryStatus] = useState("DISPATCHED");
@@ -160,12 +172,31 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const waOrders = orders.filter((o) => o.channel === "WHATSAPP");
   const webOrders = orders.filter((o) => o.channel === "WEBSITE");
 
-  const waPendingPaisa = waOrders.reduce((sum, o) => sum + (o.payment_status !== "RETURNED" ? o.cod_balance_paisa : 0), 0);
-  const webPendingPaisa = webOrders.reduce((sum, o) => sum + (o.payment_status !== "RETURNED" ? o.cod_balance_paisa : 0), 0);
+  // Total Gross Order Value
+  const totalGrossOrderValuePaisa = orders.reduce((sum, o) => sum + o.total_amount_paisa, 0);
+  const waGrossOrderValuePaisa = waOrders.reduce((sum, o) => sum + o.total_amount_paisa, 0);
+  const webGrossOrderValuePaisa = webOrders.reduce((sum, o) => sum + o.total_amount_paisa, 0);
+
+  // Pending Receivables (COD)
+  const waPendingPaisa = waOrders.reduce(
+    (sum, o) => sum + (o.payment_status !== "RETURNED" ? o.cod_balance_paisa : 0),
+    0
+  );
+  const webPendingPaisa = webOrders.reduce(
+    (sum, o) => sum + (o.payment_status !== "RETURNED" ? o.cod_balance_paisa : 0),
+    0
+  );
   const totalPendingPaisa = waPendingPaisa + webPendingPaisa;
 
-  const waCollectedPaisa = waOrders.reduce((sum, o) => sum + o.advance_paid_paisa, 0);
-  const webCollectedPaisa = webOrders.reduce((sum, o) => sum + o.advance_paid_paisa, 0);
+  // Realized Net Cash Collected (Advance paid minus any refunded money)
+  const waCollectedPaisa = waOrders.reduce(
+    (sum, o) => sum + Math.max(0, o.advance_paid_paisa - (o.refund_amount_paisa || 0)),
+    0
+  );
+  const webCollectedPaisa = webOrders.reduce(
+    (sum, o) => sum + Math.max(0, o.advance_paid_paisa - (o.refund_amount_paisa || 0)),
+    0
+  );
   const totalCollectedPaisa = waCollectedPaisa + webCollectedPaisa;
 
   // Custodian split of pending money
@@ -177,7 +208,29 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     .filter((o) => o.payment_custodian === "STAFF_HANDLER" && o.payment_status !== "RETURNED")
     .reduce((sum, o) => sum + o.cod_balance_paisa, 0);
 
-  const returnedOrders = orders.filter((o) => o.delivery_status === "RETURNED_RTO" || o.payment_status === "RETURNED");
+  const waStaffPendingPaisa = orders
+    .filter(
+      (o) =>
+        o.channel === "WHATSAPP" &&
+        o.payment_custodian === "STAFF_HANDLER" &&
+        o.payment_status !== "RETURNED"
+    )
+    .reduce((sum, o) => sum + o.cod_balance_paisa, 0);
+
+  const webStaffPendingPaisa = orders
+    .filter(
+      (o) =>
+        o.channel === "WEBSITE" &&
+        o.payment_custodian === "STAFF_HANDLER" &&
+        o.payment_status !== "RETURNED"
+    )
+    .reduce((sum, o) => sum + o.cod_balance_paisa, 0);
+
+  const returnedOrders = orders.filter(
+    (o) => o.delivery_status === "RETURNED_RTO" || o.payment_status === "RETURNED"
+  );
+  const totalReturnedValuePaisa = returnedOrders.reduce((sum, o) => sum + o.total_amount_paisa, 0);
+  const totalRefundedPaisa = returnedOrders.reduce((sum, o) => sum + (o.refund_amount_paisa || 0), 0);
 
   // Filtering
   const filteredOrders = useMemo(() => {
@@ -203,6 +256,13 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       );
     });
   }, [orders, filterTab, searchQuery]);
+
+  // Pagination Slice (10 items per page)
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
+  const paginatedOrders = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredOrders.slice(start, start + pageSize);
+  }, [filteredOrders, currentPage, pageSize]);
 
   // Handle Item Addition in New Order Modal
   const handleAddItem = (prod: FinishedProduct | AttarProduct, type: "PERFUME" | "ATTAR") => {
@@ -478,17 +538,45 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     }
   };
 
-  // Open Return / RTO Modal
+  // Open Return / RTO & Cancellation Refund Modal
   const openReturnModal = (order: OnlineOrder) => {
     setSelectedOrder(order);
-    setReturnReason("Customer refused parcel / Address unreachable");
+    setReturnReason("Customer cancelled order / refused parcel / Address unreachable");
+    if (order.advance_paid_paisa > 0) {
+      setRefundMode("FULL");
+      setRefundDeductionRupees("0");
+      setRefundPaymentMethod(order.collection_method || order.refund_settlement_method || "CASH");
+    } else {
+      setRefundMode("NONE");
+      setRefundDeductionRupees("0");
+      setRefundPaymentMethod("CASH");
+    }
     setIsReturnModalOpen(true);
   };
 
-  // Execute Return / RTO
+  // Execute Return / RTO & Refund Settlement
   const handleExecuteReturn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedOrder) return;
+
+    const advancePaisa = selectedOrder.advance_paid_paisa;
+    let refundPaisa = 0;
+    let deductionPaisa = 0;
+
+    if (advancePaisa > 0) {
+      if (refundMode === "FULL") {
+        refundPaisa = advancePaisa;
+        deductionPaisa = 0;
+      } else if (refundMode === "PARTIAL") {
+        const deductionInputPaisa = Math.max(0, Math.round((parseFloat(refundDeductionRupees) || 0) * 100));
+        deductionPaisa = Math.min(advancePaisa, deductionInputPaisa);
+        refundPaisa = Math.max(0, advancePaisa - deductionPaisa);
+      } else {
+        // NONE (100% advance retained)
+        refundPaisa = 0;
+        deductionPaisa = advancePaisa;
+      }
+    }
 
     try {
       setLoading(true);
@@ -496,12 +584,19 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
         order_id: selectedOrder.order_id,
         return_reason: returnReason.trim(),
         user_id: currentUser?.user_id || "usr_online_mgr",
+        refund_amount_paisa: refundPaisa,
+        deduction_amount_paisa: deductionPaisa,
+        refund_settlement_method: refundPaisa > 0 ? refundPaymentMethod : undefined,
       };
 
       await markOnlineOrderReturn(payload);
       setFeedback({
         type: "success",
-        text: `✓ Order ${selectedOrder.order_number} marked as Returned (RTO). Stock restocked into inventory & pending COD balance cleared!`,
+        text: `✓ Order ${selectedOrder.order_number} marked as Returned (RTO). Stock restocked into inventory! ${
+          refundPaisa > 0
+            ? `Rs. ${formatRs(refundPaisa)} refunded to customer (${refundPaymentMethod}).`
+            : ""
+        } ${deductionPaisa > 0 ? `Rs. ${formatRs(deductionPaisa)} retained as handling deduction.` : ""}`,
       });
       setIsReturnModalOpen(false);
       setSelectedOrder(null);
@@ -901,18 +996,30 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
 
       {/* EXECUTIVE KPI SUMMARY CARDS */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
-        {/* Card 1: Total Orders */}
+        {/* Card 1: Total Orders & Gross Value */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-4 rounded-xl shadow-xs">
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
             <span>Total Online Orders</span>
             <Globe className="w-4 h-4 text-blue-500" />
           </div>
-          <span className="text-2xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-1 block">
-            {orders.length} Orders
-          </span>
-          <span className="text-[11px] text-slate-500 font-mono mt-0.5 block truncate">
-            💬 WA: {waOrders.length} | 🌐 Web: {webOrders.length}
-          </span>
+          <div className="flex items-baseline justify-between mt-1">
+            <span className="text-2xl font-bold font-mono text-slate-900 dark:text-slate-100">
+              {orders.length} Orders
+            </span>
+            <span className="text-xs font-mono font-bold text-slate-700 dark:text-slate-300">
+              Gross: Rs. {formatRs(totalGrossOrderValuePaisa)}
+            </span>
+          </div>
+          <div className="mt-1 pt-1 border-t border-slate-100 dark:border-slate-800/80 flex flex-col gap-0.5 text-[11px] font-mono">
+            <div className="flex justify-between text-slate-500">
+              <span>💬 WA: {waOrders.length} (Rs. {formatRs(waGrossOrderValuePaisa)})</span>
+              <span>🌐 Web: {webOrders.length} (Rs. {formatRs(webGrossOrderValuePaisa)})</span>
+            </div>
+            <div className="flex justify-between font-semibold">
+              <span className="text-emerald-600 dark:text-emerald-400">Rec: Rs. {formatRs(totalCollectedPaisa)}</span>
+              <span className="text-amber-600 dark:text-amber-400">Pend: Rs. {formatRs(totalPendingPaisa)}</span>
+            </div>
+          </div>
         </div>
 
         {/* Card 2: Pending Receivables (Pending COD & Balances) */}
@@ -924,9 +1031,16 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
           <span className="text-2xl font-bold font-mono text-amber-600 dark:text-amber-400 mt-1 block">
             Rs. {formatRs(totalPendingPaisa)}
           </span>
-          <span className="text-[11px] text-amber-700/80 dark:text-amber-400/80 font-mono mt-0.5 block truncate">
-            💬 WA: Rs. {formatRs(waPendingPaisa)} | 🌐 Web: Rs. {formatRs(webPendingPaisa)}
-          </span>
+          <div className="mt-1 pt-1 border-t border-amber-500/20 flex flex-col gap-0.5 text-[11px] font-mono text-amber-800 dark:text-amber-300">
+            <div className="flex justify-between">
+              <span>💬 WhatsApp:</span>
+              <span className="font-bold">Rs. {formatRs(waPendingPaisa)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>🌐 Website:</span>
+              <span className="font-bold">Rs. {formatRs(webPendingPaisa)}</span>
+            </div>
+          </div>
         </div>
 
         {/* Card 3: Custodian Breakdown (Where is the Pending Money?) */}
@@ -935,19 +1049,20 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
             <span>Pending Custodian Split</span>
             <Truck className="w-4 h-4 text-indigo-500" />
           </div>
-          <div className="mt-1 flex flex-col gap-0.5">
-            <div className="flex items-center justify-between text-xs font-mono font-bold text-slate-800 dark:text-slate-200">
+          <div className="mt-1 flex flex-col gap-1 font-mono text-xs">
+            <div className="flex items-center justify-between font-bold text-slate-800 dark:text-slate-200">
               <span className="flex items-center gap-1">🚚 Courier COD:</span>
               <span className="text-indigo-600 dark:text-indigo-400">Rs. {formatRs(courierCodPaisa)}</span>
             </div>
-            <div className="flex items-center justify-between text-xs font-mono font-bold text-slate-800 dark:text-slate-200">
+            <div className="flex items-center justify-between font-bold text-slate-800 dark:text-slate-200">
               <span className="flex items-center gap-1">👤 Staff Handler:</span>
               <span className="text-amber-600 dark:text-amber-400">Rs. {formatRs(staffPendingPaisa)}</span>
             </div>
+            <div className="pt-1 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[10.5px] text-slate-500">
+              <span>💬 WA Staff: <strong className="text-slate-700 dark:text-slate-300">Rs. {formatRs(waStaffPendingPaisa)}</strong></span>
+              <span>🌐 Web Staff: <strong className="text-slate-700 dark:text-slate-300">Rs. {formatRs(webStaffPendingPaisa)}</strong></span>
+            </div>
           </div>
-          <span className="text-[10px] text-slate-400 font-mono mt-1 block">
-            Money pending with riders vs online staff
-          </span>
         </div>
 
         {/* Card 4: Realized Cash Received (Net Collections) */}
@@ -959,9 +1074,16 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
           <span className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1 block">
             Rs. {formatRs(totalCollectedPaisa)}
           </span>
-          <span className="text-[11px] text-slate-500 font-mono mt-0.5 block truncate">
-            💬 WA: Rs. {formatRs(waCollectedPaisa)} | 🌐 Web: Rs. {formatRs(webCollectedPaisa)}
-          </span>
+          <div className="mt-1 pt-1 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-0.5 text-[11px] font-mono">
+            <div className="flex justify-between items-center text-slate-700 dark:text-slate-300">
+              <span>💬 WhatsApp:</span>
+              <span className="font-bold text-emerald-600 dark:text-emerald-400">Rs. {formatRs(waCollectedPaisa)}</span>
+            </div>
+            <div className="flex justify-between items-center text-slate-700 dark:text-slate-300">
+              <span>🌐 Website:</span>
+              <span className="font-bold text-blue-600 dark:text-blue-400">Rs. {formatRs(webCollectedPaisa)}</span>
+            </div>
+          </div>
         </div>
 
         {/* Card 5: Returns / RTOs */}
@@ -970,12 +1092,24 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
             <span>Returns / RTOs</span>
             <RotateCcw className="w-4 h-4 text-rose-500" />
           </div>
-          <span className="text-2xl font-bold font-mono text-rose-600 dark:text-rose-400 mt-1 block">
-            {returnedOrders.length} Parcels
-          </span>
-          <span className="text-[11px] text-slate-500 font-mono mt-0.5 block truncate">
-            Restocked & COD cleared
-          </span>
+          <div className="flex items-baseline justify-between mt-1">
+            <span className="text-2xl font-bold font-mono text-rose-600 dark:text-rose-400">
+              {returnedOrders.length} Parcels
+            </span>
+            <span className="text-xs font-mono font-bold text-rose-700 dark:text-rose-300">
+              Rs. {formatRs(totalReturnedValuePaisa)}
+            </span>
+          </div>
+          <div className="mt-1 pt-1 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-0.5 text-[10.5px] font-mono text-slate-500">
+            <div className="flex justify-between">
+              <span>Goods Value:</span>
+              <span className="font-semibold text-slate-700 dark:text-slate-300">Rs. {formatRs(totalReturnedValuePaisa)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Total Refunded:</span>
+              <span className="font-semibold text-rose-600 dark:text-rose-400">Rs. {formatRs(totalRefundedPaisa)}</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1036,7 +1170,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono">
-            {filteredOrders.map((o) => (
+            {paginatedOrders.map((o) => (
               <tr key={o.order_id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors">
                 {/* 1. Order Number & Date */}
                 <td className="py-2.5 px-3">
@@ -1129,7 +1263,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                   )}
                 </td>
 
-                {/* 9. Status Badges */}
+                {/* 9. Status Badges & Refund Details */}
                 <td className="py-2.5 px-3 text-center">
                   <div className="flex flex-col items-center gap-1">
                     <span
@@ -1148,6 +1282,20 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                     <span className="text-[9px] font-sans text-slate-500 font-semibold uppercase">
                       {o.delivery_status}
                     </span>
+                    {o.payment_status === "RETURNED" && (
+                      <div className="flex flex-col gap-0.5 mt-0.5 max-w-[130px]">
+                        {o.refund_amount_paisa && o.refund_amount_paisa > 0 ? (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 whitespace-nowrap">
+                            ↩ Ref: Rs. {formatRs(o.refund_amount_paisa)} ({o.refund_settlement_method || "CASH"})
+                          </span>
+                        ) : null}
+                        {o.deduction_amount_paisa && o.deduction_amount_paisa > 0 ? (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 whitespace-nowrap">
+                            Cut Kept: Rs. {formatRs(o.deduction_amount_paisa)}
+                          </span>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
                 </td>
 
@@ -1198,7 +1346,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                         size="sm"
                         onClick={() => openReturnModal(o)}
                         className="h-7 px-1.5 text-rose-500 hover:bg-rose-500/10 cursor-pointer"
-                        title="Mark Parcel Return / RTO (Restocks Inventory & Clears COD)"
+                        title="Mark Parcel Return / RTO & Cancellation Refund"
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
                       </Button>
@@ -1217,6 +1365,78 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Pagination Footer Controls */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs">
+        <div className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+          Showing{" "}
+          <span className="font-bold text-slate-900 dark:text-slate-100">
+            {filteredOrders.length > 0 ? (currentPage - 1) * pageSize + 1 : 0}
+          </span>{" "}
+          to{" "}
+          <span className="font-bold text-slate-900 dark:text-slate-100">
+            {Math.min(currentPage * pageSize, filteredOrders.length)}
+          </span>{" "}
+          of{" "}
+          <span className="font-bold text-slate-900 dark:text-slate-100">
+            {filteredOrders.length}
+          </span>{" "}
+          orders (Page {currentPage} of {totalPages})
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage <= 1}
+            className="text-xs px-3 py-1 cursor-pointer disabled:opacity-40"
+          >
+            ◀ Previous
+          </Button>
+
+          {Array.from({ length: totalPages }, (_, i) => i + 1).map((pg) => {
+            if (
+              pg === 1 ||
+              pg === totalPages ||
+              (pg >= currentPage - 1 && pg <= currentPage + 1)
+            ) {
+              return (
+                <button
+                  key={pg}
+                  type="button"
+                  onClick={() => setCurrentPage(pg)}
+                  className={`w-7 h-7 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    currentPage === pg
+                      ? "bg-amber-500 text-slate-950 shadow-xs font-black"
+                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  }`}
+                >
+                  {pg}
+                </button>
+              );
+            }
+            if (pg === currentPage - 2 || pg === currentPage + 2) {
+              return (
+                <span key={pg} className="px-1 text-slate-400 text-xs">
+                  ...
+                </span>
+              );
+            }
+            return null;
+          })}
+
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            disabled={currentPage >= totalPages}
+            className="text-xs px-3 py-1 cursor-pointer disabled:opacity-40"
+          >
+            Next ▶
+          </Button>
+        </div>
       </div>
 
       {/* ========================================================================= */}
@@ -1761,11 +1981,11 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 3: MARK RETURN / RTO */}
+      {/* MODAL 3: MARK RETURN / RTO & CANCELLATION REFUND */}
       {/* ========================================================================= */}
       {isReturnModalOpen && selectedOrder && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-rose-500/10">
               <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
                 <RotateCcw className="w-5 h-5" />
@@ -1790,6 +2010,125 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                   <li>Order status will be updated to <strong>RETURNED_RTO</strong>.</li>
                 </ul>
               </div>
+
+              {/* Advance Paid & Refund Settlement Options */}
+              {selectedOrder.advance_paid_paisa > 0 && (
+                <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3 font-sans">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-slate-800 dark:text-slate-200">
+                      Customer Paid Advance / Collected:
+                    </span>
+                    <span className="font-mono font-bold text-sm text-emerald-600 dark:text-emerald-400">
+                      Rs. {formatRs(selectedOrder.advance_paid_paisa)}
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                      Select Refund Settlement Option:
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRefundMode("FULL");
+                          setRefundDeductionRupees("0");
+                        }}
+                        className={`p-2 rounded-lg border text-center text-xs font-bold transition-all cursor-pointer ${
+                          refundMode === "FULL"
+                            ? "bg-emerald-500/15 border-emerald-500 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500"
+                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:border-slate-400"
+                        }`}
+                      >
+                        Full Refund
+                        <div className="text-[10px] font-normal text-slate-500">100% money back</div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRefundMode("PARTIAL");
+                          setRefundDeductionRupees("200");
+                        }}
+                        className={`p-2 rounded-lg border text-center text-xs font-bold transition-all cursor-pointer ${
+                          refundMode === "PARTIAL"
+                            ? "bg-amber-500/15 border-amber-500 text-amber-700 dark:text-amber-300 ring-1 ring-amber-500"
+                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:border-slate-400"
+                        }`}
+                      >
+                        Partial Refund
+                        <div className="text-[10px] font-normal text-slate-500">Deduct courier/cut</div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRefundMode("NONE");
+                          setRefundDeductionRupees((selectedOrder.advance_paid_paisa / 100).toString());
+                        }}
+                        className={`p-2 rounded-lg border text-center text-xs font-bold transition-all cursor-pointer ${
+                          refundMode === "NONE"
+                            ? "bg-rose-500/15 border-rose-500 text-rose-700 dark:text-rose-300 ring-1 ring-rose-500"
+                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:border-slate-400"
+                        }`}
+                      >
+                        No Refund
+                        <div className="text-[10px] font-normal text-slate-500">Retain full advance</div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {refundMode === "PARTIAL" && (
+                    <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-lg space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-amber-800 dark:text-amber-300">
+                          Deduction Cut (Courier/Handling PKR):
+                        </span>
+                        <div className="w-28">
+                          <Input
+                            type="number"
+                            min={0}
+                            max={selectedOrder.advance_paid_paisa / 100}
+                            value={refundDeductionRupees}
+                            onChange={(e) => setRefundDeductionRupees(e.target.value)}
+                            className="h-7 text-xs text-right font-mono font-bold text-rose-600"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex justify-between items-center text-xs font-mono font-bold pt-1 border-t border-amber-500/20">
+                        <span>Net Refund Amount to Customer:</span>
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          Rs. {formatRs(
+                            Math.max(
+                              0,
+                              selectedOrder.advance_paid_paisa -
+                                Math.round((parseFloat(refundDeductionRupees) || 0) * 100)
+                            )
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {refundMode !== "NONE" && (
+                    <div>
+                      <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                        Refund Settlement Channel:
+                      </label>
+                      <select
+                        value={refundPaymentMethod}
+                        onChange={(e) => setRefundPaymentMethod(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold"
+                      >
+                        <option value="CASH">💵 Cash</option>
+                        <option value="EASYPAISA">📱 EasyPaisa</option>
+                        <option value="JAZZCASH">📱 JazzCash</option>
+                        <option value="BANK_TRANSFER">🏦 Bank Transfer</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F6D365"/>
+      <stop offset="50%" stop-color="#D4AF37"/>
+      <stop offset="100%" stop-color="#AA771C"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1A1816"/>
+      <stop offset="100%" stop-color="#0A0908"/>
+    </linearGradient>
+  </defs>
+  <!-- Background rounded rect -->
+  <rect width="512" height="512" rx="100" fill="url(#bg)"/>
+  
+  <!-- Outer border -->
+  <rect x="24" y="24" width="464" height="464" rx="80" fill="none" stroke="url(#gold)" stroke-width="4" opacity="0.6"/>
+  
+  <!-- Perfume Cap -->
+  <rect x="216" y="90" width="80" height="55" rx="10" fill="url(#gold)"/>
+  <rect x="236" y="145" width="40" height="25" fill="#D4AF37"/>
+  
+  <!-- Perfume Bottle Shoulder & Body -->
+  <path d="M 170 170 C 200 170 210 170 236 170 L 276 170 C 302 170 312 170 342 170 C 370 170 382 195 382 225 L 382 390 C 382 420 360 440 330 440 L 182 440 C 152 440 130 420 130 390 L 130 225 C 130 195 142 170 170 170 Z" fill="none" stroke="url(#gold)" stroke-width="8"/>
+  
+  <!-- Inner Fill Overlay -->
+  <path d="M 176 182 C 200 182 210 182 236 182 L 276 182 C 302 182 312 182 336 182 C 360 182 370 202 370 228 L 370 385 C 370 412 352 428 325 428 L 187 428 C 160 428 142 412 142 385 L 142 228 C 142 202 152 182 176 182 Z" fill="#D4AF37" opacity="0.15"/>
+  
+  <!-- Perfume Label Frame -->
+  <rect x="176" y="250" width="160" height="120" rx="12" fill="#1A1816" stroke="url(#gold)" stroke-width="3"/>
+  <rect x="182" y="256" width="148" height="108" rx="8" fill="none" stroke="#D4AF37" stroke-width="1" opacity="0.5"/>
+  
+  <!-- Label Text -->
+  <text x="256" y="295" font-family="'Cinzel', 'Trajan Pro', 'Georgia', serif" font-size="24" font-weight="bold" fill="url(#gold)" text-anchor="middle" letter-spacing="3">AMEER</text>
+  <text x="256" y="325" font-family="'Cinzel', 'Trajan Pro', 'Georgia', serif" font-size="12" fill="#FFFFFF" text-anchor="middle" letter-spacing="4" opacity="0.9">PARFUMS</text>
+  <text x="256" y="348" font-family="'Cinzel', 'Trajan Pro', 'Georgia', serif" font-size="9" fill="url(#gold)" text-anchor="middle" letter-spacing="2">PURE LUXURY</text>
+</svg>

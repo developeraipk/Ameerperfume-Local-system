@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" class="light">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/logo-square.png" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ameer Perfumes ERP — Luxury Perfumery Management System</title>
+    <script>
+      (function() {
+        var theme = localStorage.getItem('ameer_theme') || 'light';
+        document.documentElement.classList.add(theme);
+        if (theme === 'dark') {
+          document.documentElement.classList.remove('light');
+          document.documentElement.style.colorScheme = 'dark';
+        } else {
+          document.documentElement.classList.remove('dark');
+          document.documentElement.style.colorScheme = 'light';
+        }
+      })();
+    </script>
+  </head>
+  <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased selection:bg-amber-500 selection:text-slate-950 overflow-x-hidden">
+    <div id="root"></div>
+    <div id="thermal-print-area"></div>
+    <div id="wholesale-print-area"></div>
+    <div id="reports-print-area"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,30 @@
+[package]
+name = "ameer-perfumes-erp"
+version = "4.2.3"
+description = "Ameer Perfumes ERP — Luxury Perfumery Management System"
+authors = ["Architecture & Engineering Team"]
+edition = "2021"
+
+[lib]
+name = "ameer_perfumes_erp_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = [] }
+tauri-plugin-shell = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rusqlite = { version = "0.31", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.8", features = ["v4", "serde"] }
+dirs = "5.0"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

@@ -629,7 +629,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
 
     const channelLabelText =
       channelFilter === "ALL"
-        ? "All Channels Consolidated"
+        ? "All Channels"
         : channelFilter === "POS"
         ? "Retail POS Counter Only"
         : channelFilter === "ONLINE"
@@ -1494,80 +1494,80 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </p>
         </div>
 
-        {/* Global Period Selector, Channel Filter & Primary Actions */}
-        <div className="flex flex-col items-end gap-2.5">
-          {/* Action buttons, Period Filter Dropdown and Channel Filter */}
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            {/* Period Filter Dropdown */}
-            <div className="flex items-center bg-slate-200 dark:bg-slate-900 p-1 rounded-xl border border-slate-300 dark:border-slate-800 text-xs shrink-0">
-              <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase px-2 font-mono flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-amber-500" />
-                <span>Period:</span>
-              </span>
-              <select
-                value={period}
-                onChange={(e) => setPeriod(e.target.value as PeriodFilter)}
-                className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-bold text-xs rounded-lg px-2.5 py-1 border border-slate-300 dark:border-slate-700 outline-none cursor-pointer focus:ring-1 focus:ring-amber-500"
-              >
-                <option value="TODAY">Daily (Today)</option>
-                <option value="WEEK">Weekly (Last 7 Days)</option>
-                <option value="MONTH">Monthly (This Month)</option>
-                <option value="YEAR">Yearly (This Year)</option>
-                <option value="ALL">All Records (Lifetime)</option>
-              </select>
-            </div>
-
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={loadData}
-              disabled={loading}
-              className="flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
+        {/* Global Period Selector, Channel Filter & Primary Actions - All 5 in 1 Single Professional Row */}
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1 shrink-0 flex-nowrap">
+          {/* 1. Period Filter Dropdown */}
+          <div className="flex items-center bg-white dark:bg-slate-900 px-2.5 py-1 rounded-xl border border-slate-300 dark:border-slate-700 shadow-2xs hover:border-amber-500/50 transition-colors h-8.5 shrink-0">
+            <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0 mr-1.5" />
+            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mr-1.5 font-mono">
+              Period:
+            </span>
+            <select
+              value={period}
+              onChange={(e) => setPeriod(e.target.value as PeriodFilter)}
+              className="bg-transparent text-slate-900 dark:text-slate-100 font-bold text-xs outline-none cursor-pointer pr-1"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-              <span>Refresh</span>
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handlePrintReport}
-              className="flex items-center gap-1.5 text-xs font-semibold cursor-pointer border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 whitespace-nowrap"
-              title="Prints the currently active report tab"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span>Print Current Tab</span>
-            </Button>
-
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={handlePrintAllTablesMasterReport}
-              className="flex items-center gap-1.5 text-xs font-bold cursor-pointer bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 shadow-sm whitespace-nowrap"
-              title="Prints all tables filtered by selected channel & period in one master audit report"
-            >
-              <Printer className="w-3.5 h-3.5 text-slate-950" />
-              <span>Print Master Audit Report</span>
-            </Button>
-
-            {/* Channel Filter Dropdown (All, POS, Online Orders, Wholesale) - Placed to the right of Print Master Audit Report */}
-            <div className="flex items-center bg-slate-200 dark:bg-slate-900 p-1 rounded-xl border border-slate-300 dark:border-slate-800 text-xs shrink-0">
-              <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase px-2 font-mono flex items-center gap-1.5">
-                <Globe className="w-3.5 h-3.5 text-amber-500" />
-                <span>Channel:</span>
-              </span>
-              <select
-                value={channelFilter}
-                onChange={(e) => setChannelFilter(e.target.value as ChannelAuditFilter)}
-                className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-bold text-xs rounded-lg px-2.5 py-1 border border-slate-300 dark:border-slate-700 outline-none cursor-pointer focus:ring-1 focus:ring-amber-500"
-              >
-                <option value="ALL">All Channels (Consolidated)</option>
-                <option value="POS">Retail POS Counter</option>
-                <option value="ONLINE">Online Orders (WhatsApp & Web)</option>
-                <option value="WHOLESALE">Wholesale Commercial</option>
-              </select>
-            </div>
+              <option value="TODAY" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">Daily (Today)</option>
+              <option value="WEEK" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">Weekly</option>
+              <option value="MONTH" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">Monthly</option>
+              <option value="YEAR" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">Yearly</option>
+              <option value="ALL" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">All Records</option>
+            </select>
           </div>
+
+          {/* 2. Channel Filter Dropdown */}
+          <div className="flex items-center bg-white dark:bg-slate-900 px-2.5 py-1 rounded-xl border border-slate-300 dark:border-slate-700 shadow-2xs hover:border-amber-500/50 transition-colors h-8.5 shrink-0">
+            <Globe className="w-3.5 h-3.5 text-amber-500 shrink-0 mr-1.5" />
+            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mr-1.5 font-mono">
+              Channel:
+            </span>
+            <select
+              value={channelFilter}
+              onChange={(e) => setChannelFilter(e.target.value as ChannelAuditFilter)}
+              className="bg-transparent text-slate-900 dark:text-slate-100 font-bold text-xs outline-none cursor-pointer pr-1"
+            >
+              <option value="ALL" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">All Channels</option>
+              <option value="POS" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">Retail POS</option>
+              <option value="ONLINE" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">Online Orders</option>
+              <option value="WHOLESALE" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">Wholesale</option>
+            </select>
+          </div>
+
+          {/* 3. Refresh Action Button */}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={loadData}
+            disabled={loading}
+            className="h-8.5 flex items-center gap-1.5 text-xs font-semibold cursor-pointer shrink-0"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </Button>
+
+          {/* 4. Print Current Tab Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handlePrintReport}
+            className="h-8.5 flex items-center gap-1.5 text-xs font-semibold cursor-pointer border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 whitespace-nowrap shrink-0"
+            title="Prints the currently active report tab"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>Print Current Tab</span>
+          </Button>
+
+          {/* 5. Print Master Audit Report Button */}
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handlePrintAllTablesMasterReport}
+            className="h-8.5 flex items-center gap-1.5 text-xs font-bold cursor-pointer bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 shadow-sm whitespace-nowrap shrink-0"
+            title="Prints all tables filtered by selected channel & period in one master audit report"
+          >
+            <Printer className="w-3.5 h-3.5 text-slate-950" />
+            <span>Print Master Audit Report</span>
+          </Button>
         </div>
       </div>
 

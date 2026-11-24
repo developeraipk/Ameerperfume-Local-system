@@ -798,7 +798,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
             Thank you for choosing Ameer Perfumes!<br/>
             Complaints & Support: <strong>0310-0988522</strong><br/>
             <span style="font-size: 8.5px; font-weight: 700; color: #000000; margin-top: 2px; display: inline-block;">
-              Software Developed by Global Tech • Contact: 0312-9844284 / 0310-0988522
+              Software Developed by Global Tech • Contact: 0329 9969277
             </span>
           </div>
         </div>
@@ -919,7 +919,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
 
           <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; display: flex; justify-content: space-between; font-size: 10px; color: #64748b;">
             <div>Ameer Perfumes ERP • Official E-Commerce Shipping Dispatch Document</div>
-            <div>Software Developed by Global Tech • Contact: 0312-9844284 / 0310-0988522</div>
+            <div>Software Developed by Global Tech • Contact: 0329 9969277</div>
           </div>
         </div>
       `;

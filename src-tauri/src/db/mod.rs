@@ -7803,7 +7803,7 @@ impl DatabaseManager {
             }
         }
 
-        // Aggregate online orders parsing true item units from items_json
+        // Aggregate online orders parsing true item units from items_json (Gross orders, revenue, and units preserved - returns do not cut from channel telemetry)
         if let Ok(mut onl_stmt) = conn.prepare(&format!("
             SELECT 
                 CASE 
@@ -7813,7 +7813,7 @@ impl DatabaseManager {
                 total_amount_paisa,
                 items_json
             FROM online_orders
-            WHERE payment_status != 'RETURNED' AND {};
+            WHERE {};
         ", onl_cond)) {
             if let Ok(rows) = onl_stmt.query_map([], |r| {
                 Ok((

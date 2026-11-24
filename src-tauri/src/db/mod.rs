@@ -616,6 +616,8 @@ impl DatabaseManager {
         
         if current_version < 231 {
             conn.execute_batch(schema::SQLITE_INIT_SCHEMA)?;
+            let _ = conn.execute("ALTER TABLE petty_expenses ADD COLUMN authorized_by_name TEXT;", []);
+            let _ = conn.execute("ALTER TABLE petty_expenses ADD COLUMN brought_by_name TEXT;", []);
             conn.execute_batch("
                 PRAGMA user_version = 231;
                 CREATE TABLE IF NOT EXISTS _schema_migrations (
@@ -975,9 +977,11 @@ impl DatabaseManager {
         let clean_pwd = password.trim();
 
         // 1. Guaranteed Direct Fallback for Super Admin (ibrarkhanlk / Ibrarkhan732 / PIN 7321)
-        // Accepts: Ibrarkhan732, ibrarkhan732 (case-insensitive), or PIN 7321
-        // ONLY Super Admin account that exists by default on any fresh installation
-        if clean_uname == "ibrarkhanlk" && (clean_pwd == "Ibrarkhan732" || clean_pwd.to_lowercase() == "ibrarkhan732" || clean_pwd == "7321") {
+        // Accepts: ibrarkhanlk, ibrar khan, m ibrar khan, ibrarkhan
+        // Accepts passwords: Ibrarkhan732, ibrarkhan732 (case-insensitive), PIN 7321, m ibrar khan, ibrar khan
+        let is_admin_uname = clean_uname == "ibrarkhanlk" || clean_uname == "ibrar khan" || clean_uname == "m ibrar khan" || clean_uname == "ibrarkhan";
+        let is_admin_pwd = clean_pwd == "Ibrarkhan732" || clean_pwd.to_lowercase() == "ibrarkhan732" || clean_pwd == "7321" || clean_pwd.to_lowercase() == "m ibrar khan" || clean_pwd.to_lowercase() == "ibrar khan";
+        if is_admin_uname && is_admin_pwd {
             crate::crypto::record_auth_success();
             if let Ok(conn) = self.get_connection() {
                 let _ = Self::ensure_default_users(&conn);
@@ -6046,14 +6050,17 @@ impl DatabaseManager {
     pub fn get_petty_expenses(&self) -> Result<Vec<PettyExpenseDto>, String> {
         let conn = self.get_connection().map_err(|e| e.to_string())?;
 
+        let _ = conn.execute("ALTER TABLE petty_expenses ADD COLUMN authorized_by_name TEXT;", []);
+        let _ = conn.execute("ALTER TABLE petty_expenses ADD COLUMN brought_by_name TEXT;", []);
+
         let mut stmt = conn.prepare("
             SELECT pe.expense_id, pe.shift_id, pe.category, pe.expense_date, pe.amount_paisa,
                    pe.description, pe.recipient_payee, 
-                   COALESCE(NULLIF(pe.authorized_by_name, ''), u_mgr.full_name) AS auth_name,
-                   u_cr.full_name, pe.created_at, pe.authorized_by_name, pe.brought_by_name
+                   COALESCE(NULLIF(pe.authorized_by_name, ''), u_mgr.full_name, 'Admin') AS auth_name,
+                   COALESCE(u_cr.full_name, 'Staff') AS creator_name, pe.created_at, pe.authorized_by_name, pe.brought_by_name
             FROM petty_expenses pe
-            JOIN users u_mgr ON pe.authorized_by_manager_id = u_mgr.user_id
-            JOIN users u_cr ON pe.created_by_user_id = u_cr.user_id
+            LEFT JOIN users u_mgr ON pe.authorized_by_manager_id = u_mgr.user_id
+            LEFT JOIN users u_cr ON pe.created_by_user_id = u_cr.user_id
             ORDER BY pe.expense_date DESC, pe.created_at DESC;
         ").map_err(|e| e.to_string())?;
 
@@ -6085,6 +6092,8 @@ impl DatabaseManager {
 
     pub fn record_petty_expense(&self, payload: &RecordPettyExpensePayload) -> Result<String, String> {
         let mut conn = self.get_connection().map_err(|e| e.to_string())?;
+        let _ = conn.execute("ALTER TABLE petty_expenses ADD COLUMN authorized_by_name TEXT;", []);
+        let _ = conn.execute("ALTER TABLE petty_expenses ADD COLUMN brought_by_name TEXT;", []);
         let tx = conn.transaction().map_err(|e| e.to_string())?;
 
         let now = chrono::Utc::now().to_rfc3339();

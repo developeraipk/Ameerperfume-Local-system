@@ -1121,7 +1121,7 @@ export const UserSecurityManagement: React.FC<UserSecurityManagementProps> = ({ 
               </label>
               <input
                 type="text"
-                placeholder="e.g. Muhammad Usman"
+                placeholder="e.g. M Ibrar Khan"
                 value={newFullName}
                 onChange={(e) => setNewFullName(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
@@ -1236,7 +1236,7 @@ export const UserSecurityManagement: React.FC<UserSecurityManagementProps> = ({ 
             <input
               type="text"
               required
-              placeholder="e.g. Bilal Ahmed"
+              placeholder="e.g. M Ibrar Khan"
               value={newEmpName}
               onChange={(e) => setNewEmpName(e.target.value)}
               className="w-full px-3 py-2 bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
@@ -1262,7 +1262,7 @@ export const UserSecurityManagement: React.FC<UserSecurityManagementProps> = ({ 
               </label>
               <input
                 type="text"
-                placeholder="0300-1234567"
+                placeholder="0332-6485172"
                 value={newEmpPhone}
                 onChange={(e) => setNewEmpPhone(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-amber-500"

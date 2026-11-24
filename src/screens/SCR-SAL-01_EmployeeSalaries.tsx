@@ -58,7 +58,7 @@ export const EmployeeSalaries: React.FC<EmployeeSalariesProps> = ({ currentUser 
   const [periodFilter, setPeriodFilter] = useState<"TODAY" | "WEEK" | "MONTH" | "ALL">("ALL");
   const [filterType, setFilterType] = useState<string>("ALL");
   const [filterMethod, setFilterMethod] = useState<string>("ALL");
-  const [authorizedByName, setAuthorizedByName] = useState("Owner (Ameer Adnan)");
+  const [authorizedByName, setAuthorizedByName] = useState("Owner ( Ameer )");
 
   const [notification, setNotification] = useState<{
     type: "success" | "error";
@@ -190,7 +190,7 @@ export const EmployeeSalaries: React.FC<EmployeeSalariesProps> = ({ currentUser 
         amount_paisa: amountPaisa,
         payment_method: paymentMethod,
         disbursed_by_user_id: currentUser?.user_id || "usr_admin",
-        disbursed_by_name: authorizedByName.trim() || "Owner (Ameer Adnan)",
+        disbursed_by_name: authorizedByName.trim() || "Owner ( Ameer )",
         notes: notes.trim() || undefined,
         payout_date: `${payoutDate}T${new Date().toTimeString().slice(0, 8)}`,
       };
@@ -746,7 +746,7 @@ export const EmployeeSalaries: React.FC<EmployeeSalariesProps> = ({ currentUser 
               type="text"
               value={authorizedByName}
               onChange={(e) => setAuthorizedByName(e.target.value)}
-              placeholder="e.g. Owner (Ameer Adnan) or Shop Manager"
+              placeholder="Owner ( Ameer ) or shop manager"
               required
               className="text-xs font-bold text-slate-900 dark:text-slate-100"
             />

@@ -1989,7 +1989,7 @@ export const WholesaleInvoicing: React.FC<WholesaleProps> = ({ currentUser }) =>
                   <Input
                     value={newCustContact}
                     onChange={(e) => setNewCustContact(e.target.value)}
-                    placeholder="e.g. Sheikh Rashid"
+                    placeholder="e.g. M Ibrar Khan"
                   />
                 </div>
               </div>
@@ -2002,7 +2002,7 @@ export const WholesaleInvoicing: React.FC<WholesaleProps> = ({ currentUser }) =>
                   <Input
                     value={newCustPhone}
                     onChange={(e) => setNewCustPhone(e.target.value)}
-                    placeholder="e.g. 0300-8889999"
+                    placeholder="e.g. 0332-6485172"
                     required
                   />
                 </div>
@@ -2014,7 +2014,7 @@ export const WholesaleInvoicing: React.FC<WholesaleProps> = ({ currentUser }) =>
                   <Input
                     value={newCustCity}
                     onChange={(e) => setNewCustCity(e.target.value)}
-                    placeholder="e.g. Lahore, Rawalpindi"
+                    placeholder="e.g. Bannu"
                     required
                   />
                 </div>
@@ -2090,7 +2090,7 @@ export const WholesaleInvoicing: React.FC<WholesaleProps> = ({ currentUser }) =>
                   <Input
                     value={editCustPhone}
                     onChange={(e) => setEditCustPhone(e.target.value)}
-                    placeholder="e.g. 0300-8889999"
+                    placeholder="e.g. 0332-6485172"
                     required
                   />
                 </div>
@@ -2103,7 +2103,7 @@ export const WholesaleInvoicing: React.FC<WholesaleProps> = ({ currentUser }) =>
                 <Input
                   value={editCustCity}
                   onChange={(e) => setEditCustCity(e.target.value)}
-                  placeholder="e.g. Lahore, Karachi"
+                  placeholder="e.g. Bannu"
                   required
                 />
               </div>

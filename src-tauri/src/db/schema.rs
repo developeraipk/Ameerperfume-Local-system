@@ -385,6 +385,7 @@ CREATE TABLE petty_expenses (
     recipient_payee TEXT NOT NULL,
     authorized_by_manager_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
     authorized_by_name TEXT,
+    brought_by_name TEXT,
     created_by_user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
     created_at TEXT NOT NULL
 );

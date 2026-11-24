@@ -260,7 +260,10 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                       <Package className="w-3 h-3 text-slate-400" /> Perfumes:
                     </span>
                     <span className="font-semibold text-slate-900 dark:text-slate-200">
-                      {dashboard.today_perfume_ret_units ?? 0} units
+                      Rs. {formatPaisa(dashboard.today_perfume_refunds_paisa ?? 0)}{" "}
+                      <span className="text-[9px] text-slate-500 font-normal">
+                        ({dashboard.today_perfume_ret_units ?? 0} units)
+                      </span>
                     </span>
                   </div>
                   <div className="flex justify-between items-center text-slate-600 dark:text-slate-400">
@@ -268,7 +271,10 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                       <Droplet className="w-3 h-3 text-amber-500" /> Attars:
                     </span>
                     <span className="font-semibold text-amber-700 dark:text-amber-400">
-                      {dashboard.today_attar_ret_units ?? 0} units
+                      Rs. {formatPaisa(dashboard.today_attar_refunds_paisa ?? 0)}{" "}
+                      <span className="text-[9px] text-amber-600/80 dark:text-amber-400/80 font-normal">
+                        ({dashboard.today_attar_ret_units ?? 0} units)
+                      </span>
                     </span>
                   </div>
                   <div className="flex justify-between items-center text-slate-600 dark:text-slate-400">
@@ -276,7 +282,10 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                       <FlaskConical className="w-3 h-3 text-purple-500" /> Testers:
                     </span>
                     <span className="font-semibold text-purple-700 dark:text-purple-400">
-                      {dashboard.today_tester_ret_units ?? 0} units
+                      Rs. {formatPaisa(dashboard.today_tester_refunds_paisa ?? 0)}{" "}
+                      <span className="text-[9px] text-purple-600/80 dark:text-purple-400/80 font-normal">
+                        ({dashboard.today_tester_ret_units ?? 0} units)
+                      </span>
                     </span>
                   </div>
                 </div>

@@ -5437,6 +5437,12 @@ pub struct ExecutiveDashboardDto {
     #[serde(default)]
     pub today_tester_ret_units: i64,
     #[serde(default)]
+    pub today_perfume_refunds_paisa: i64,
+    #[serde(default)]
+    pub today_attar_refunds_paisa: i64,
+    #[serde(default)]
+    pub today_tester_refunds_paisa: i64,
+    #[serde(default)]
     pub today_perfume_discount_paisa: i64,
     #[serde(default)]
     pub today_perfume_discount_units: i64,
@@ -6733,15 +6739,31 @@ impl DatabaseManager {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
         ).unwrap_or((0, 0, 0, 0, 0, 0));
 
-        let (perfume_refunds, attar_refunds, tester_refunds, perfume_ret_units, attar_ret_units, tester_ret_units): (i64, i64, i64, i64, i64, i64) = conn.query_row(
+        let (
+            perfume_refunds,
+            attar_refunds,
+            tester_refunds,
+            perfume_ret_units,
+            attar_ret_units,
+            tester_ret_units,
+            perfume_damaged_ret_units,
+            attar_damaged_ret_units,
+            tester_damaged_ret_units,
+        ): (i64, i64, i64, i64, i64, i64, i64, i64, i64) = conn.query_row(
             &format!(
                 "SELECT
+                   -- Category refund amounts
                    COALESCE(SUM(CASE WHEN (rvi.item_type = 'PERFUME') AND (COALESCE(fp.name, '') NOT LIKE '%Tester%') AND (COALESCE(rvi.condition_notes, '') NOT LIKE '%Tester%') AND (COALESCE(rvi.condition_notes, '') NOT LIKE '%[TESTER]%') AND (COALESCE(sii.product_name, '') NOT LIKE '%Tester%') THEN rvi.refund_line_total_paisa ELSE 0 END), 0),
                    COALESCE(SUM(CASE WHEN rvi.item_type = 'ATTAR' THEN rvi.refund_line_total_paisa ELSE 0 END), 0),
                    COALESCE(SUM(CASE WHEN (rvi.item_type = 'TESTER') OR ((rvi.item_type = 'PERFUME') AND (COALESCE(fp.name, '') LIKE '%Tester%' OR COALESCE(fp.name, '') LIKE '%Sample%' OR COALESCE(rvi.condition_notes, '') LIKE '%Tester%' OR COALESCE(rvi.condition_notes, '') LIKE '%[TESTER]%' OR COALESCE(sii.product_name, '') LIKE '%Tester%')) THEN rvi.refund_line_total_paisa ELSE 0 END), 0),
+                   -- Total returned units (for Returns card telemetry)
                    COALESCE(SUM(CASE WHEN (rvi.item_type = 'PERFUME') AND (COALESCE(fp.name, '') NOT LIKE '%Tester%') AND (COALESCE(rvi.condition_notes, '') NOT LIKE '%Tester%') AND (COALESCE(rvi.condition_notes, '') NOT LIKE '%[TESTER]%') AND (COALESCE(sii.product_name, '') NOT LIKE '%Tester%') THEN rvi.quantity_returned ELSE 0 END), 0),
                    COALESCE(SUM(CASE WHEN rvi.item_type = 'ATTAR' THEN rvi.quantity_returned ELSE 0 END), 0),
-                   COALESCE(SUM(CASE WHEN (rvi.item_type = 'TESTER') OR ((rvi.item_type = 'PERFUME') AND (COALESCE(fp.name, '') LIKE '%Tester%' OR COALESCE(fp.name, '') LIKE '%Sample%' OR COALESCE(rvi.condition_notes, '') LIKE '%Tester%' OR COALESCE(rvi.condition_notes, '') LIKE '%[TESTER]%' OR COALESCE(sii.product_name, '') LIKE '%Tester%')) THEN rvi.quantity_returned ELSE 0 END), 0)
+                   COALESCE(SUM(CASE WHEN (rvi.item_type = 'TESTER') OR ((rvi.item_type = 'PERFUME') AND (COALESCE(fp.name, '') LIKE '%Tester%' OR COALESCE(fp.name, '') LIKE '%Sample%' OR COALESCE(rvi.condition_notes, '') LIKE '%Tester%' OR COALESCE(rvi.condition_notes, '') LIKE '%[TESTER]%' OR COALESCE(sii.product_name, '') LIKE '%Tester%')) THEN rvi.quantity_returned ELSE 0 END), 0),
+                   -- Damaged returned units (quarantined/scrap/damaged note: these do NOT decrease units sold in Category Split)
+                   COALESCE(SUM(CASE WHEN (rvi.item_type = 'PERFUME') AND (COALESCE(fp.name, '') NOT LIKE '%Tester%') AND (COALESCE(rvi.condition_notes, '') NOT LIKE '%Tester%') AND (COALESCE(rvi.condition_notes, '') NOT LIKE '%[TESTER]%') AND (COALESCE(sii.product_name, '') NOT LIKE '%Tester%') AND (rvi.inspection_status IN ('QUARANTINED', 'INSPECTED_SCRAP') OR UPPER(COALESCE(rvi.condition_notes, '')) LIKE '%DAMAGE%') THEN rvi.quantity_returned ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN rvi.item_type = 'ATTAR' AND (rvi.inspection_status IN ('QUARANTINED', 'INSPECTED_SCRAP') OR UPPER(COALESCE(rvi.condition_notes, '')) LIKE '%DAMAGE%') THEN rvi.quantity_returned ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN ((rvi.item_type = 'TESTER') OR ((rvi.item_type = 'PERFUME') AND (COALESCE(fp.name, '') LIKE '%Tester%' OR COALESCE(fp.name, '') LIKE '%Sample%' OR COALESCE(rvi.condition_notes, '') LIKE '%Tester%' OR COALESCE(rvi.condition_notes, '') LIKE '%[TESTER]%' OR COALESCE(sii.product_name, '') LIKE '%Tester%'))) AND (rvi.inspection_status IN ('QUARANTINED', 'INSPECTED_SCRAP') OR UPPER(COALESCE(rvi.condition_notes, '')) LIKE '%DAMAGE%') THEN rvi.quantity_returned ELSE 0 END), 0)
                  FROM return_voucher_items rvi
                  JOIN return_vouchers rv ON rvi.return_id = rv.return_id
                  LEFT JOIN sales_invoice_items sii ON rvi.original_retail_item_id = sii.invoice_item_id
@@ -6750,15 +6772,20 @@ impl DatabaseManager {
                 ret_cond_rv
             ),
             [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
-        ).unwrap_or((0, 0, 0, 0, 0, 0));
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?))
+        ).unwrap_or((0, 0, 0, 0, 0, 0, 0, 0, 0));
+
+        // In Category Split, damaged products do NOT decrease net units sold (only clean restocked units decrease units sold)
+        let perfume_clean_ret_units = (perfume_ret_units - perfume_damaged_ret_units).max(0);
+        let attar_clean_ret_units = (attar_ret_units - attar_damaged_ret_units).max(0);
+        let tester_clean_ret_units = (tester_ret_units - tester_damaged_ret_units).max(0);
 
         let final_perfume = (net_retail_perfume + raw_wholesale_perfume - perfume_refunds).max(0);
         let final_attar = (net_retail_attar + raw_wholesale_attar - attar_refunds).max(0);
         let final_perfume_orders = retail_perfume_orders + wholesale_perfume_orders;
         let final_attar_orders = retail_attar_orders + wholesale_attar_orders;
-        let final_perfume_units = (retail_perfume_units + wholesale_perfume_units - perfume_ret_units).max(0);
-        let final_attar_units = (retail_attar_units + wholesale_attar_units - attar_ret_units).max(0);
+        let final_perfume_units = (retail_perfume_units + wholesale_perfume_units - perfume_clean_ret_units).max(0);
+        let final_attar_units = (retail_attar_units + wholesale_attar_units - attar_clean_ret_units).max(0);
 
         // Tester dispense telemetry for selected period ("oil jaisa dashboard main attar , perfume k sath tester k record b hon")
         let (tester_samples, tester_ml, tester_sales, tester_orders): (i64, i64, i64, i64) = conn.query_row(
@@ -6778,7 +6805,7 @@ impl DatabaseManager {
         ).unwrap_or((0, 0, 0, 0));
 
         let final_tester_sales = (tester_sales - tester_refunds).max(0);
-        let final_tester_units = (tester_samples - tester_ret_units).max(0);
+        let final_tester_units = (tester_samples - tester_clean_ret_units).max(0);
 
         // Category gross revenue breakdown (Retail + Wholesale before discounts)
         let (ret_perfume_gross, ret_attar_gross, ret_tester_gross): (i64, i64, i64) = conn.query_row(
@@ -7486,6 +7513,9 @@ impl DatabaseManager {
             today_perfume_ret_units: perfume_ret_units,
             today_attar_ret_units: attar_ret_units,
             today_tester_ret_units: tester_ret_units,
+            today_perfume_refunds_paisa: perfume_refunds,
+            today_attar_refunds_paisa: attar_refunds,
+            today_tester_refunds_paisa: tester_refunds,
             today_perfume_discount_paisa: final_perfume_discount_paisa,
             today_perfume_discount_units: final_perfume_discount_units,
             today_attar_discount_paisa: final_attar_discount_paisa,

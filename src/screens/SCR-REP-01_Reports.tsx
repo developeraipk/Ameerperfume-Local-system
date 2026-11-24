@@ -10,6 +10,7 @@ import {
   WholesaleInvoiceSummary,
   WholesaleCustomer,
   OnlineOrder,
+  ReturnHistoryEntry,
 } from "@/types/database";
 import {
   getInventoryValuation,
@@ -21,6 +22,7 @@ import {
   getWholesaleInvoices,
   getWholesaleCustomers,
   getOnlineOrders,
+  getReturnHistory,
   exportDatabaseToDesktop,
   openDatabaseFolder,
 } from "@/lib/tauri-bridge";
@@ -51,6 +53,7 @@ import {
   Clock,
   Globe,
   RotateCcw,
+  Landmark,
 } from "lucide-react";
 
 interface ReportsProps {
@@ -78,6 +81,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
   const [salaries, setSalaries] = useState<EmployeeSalaryPayout[]>([]);
   const [wholesaleInvoices, setWholesaleInvoices] = useState<WholesaleInvoiceSummary[]>([]);
   const [wholesaleCustomers, setWholesaleCustomers] = useState<WholesaleCustomer[]>([]);
+  const [returnHistory, setReturnHistory] = useState<ReturnHistoryEntry[]>([]);
 
   // Search queries for tables
   const [salesSearch, setSalesSearch] = useState("");
@@ -90,7 +94,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
     setLoading(true);
     setFeedback(null);
     try {
-      const [inv, recentSalesList, onlOrders, prods, atts, expList, salList, wInvoices, wCustomers] = await Promise.all([
+      const [inv, recentSalesList, onlOrders, prods, atts, expList, salList, wInvoices, wCustomers, retHist] = await Promise.all([
         getInventoryValuation(),
         getRecentSales(2000),
         getOnlineOrders(),
@@ -100,6 +104,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
         getEmployeeSalaryPayouts(),
         getWholesaleInvoices(),
         getWholesaleCustomers(),
+        getReturnHistory(2000),
       ]);
 
       setInventoryVal(inv);
@@ -111,6 +116,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
       setSalaries(salList);
       setWholesaleInvoices(wInvoices || []);
       setWholesaleCustomers(wCustomers || []);
+      setReturnHistory(retHist || []);
     } catch (err: any) {
       console.error("Failed to load comprehensive reports data:", err);
       setFeedback({
@@ -226,14 +232,51 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
     });
   }, [onlineOrders, filterByPeriod, onlineSearch]);
 
-  // Aggregate Metrics for Header Cards
-  const totalRetailNetRevenuePaisa = filteredSales.reduce((acc, s) => acc + s.net_payable_paisa, 0);
+  // Retail Returns from Return History & Sales Invoices
+  const filteredReturnHistory = useMemo(() => {
+    return returnHistory.filter((r) => filterByPeriod(r.return_date));
+  }, [returnHistory, filterByPeriod]);
+
+  const returnedSalesInvoices = useMemo(() => {
+    return filteredSales.filter(
+      (s) => s.is_returned || s.return_status === "FULL" || s.return_status === "PARTIAL" || ((s.returned_units || 0) > 0)
+    );
+  }, [filteredSales]);
+
+  const totalRetailReturnsFromHistoryPaisa = filteredReturnHistory.reduce(
+    (acc, r) => acc + (r.total_refund_amount_paisa || 0),
+    0
+  );
+  const totalRetailReturnsFromSalesPaisa = returnedSalesInvoices.reduce((acc, s) => {
+    const retUnits = s.returned_units || 0;
+    if (s.return_status === "FULL" || (s.total_units > 0 && retUnits >= s.total_units)) {
+      return acc + s.net_payable_paisa;
+    }
+    if (s.total_units > 0 && retUnits > 0) {
+      return acc + Math.round((s.net_payable_paisa * retUnits) / s.total_units);
+    }
+    return acc + s.net_payable_paisa;
+  }, 0);
+
+  const totalRetailReturnsPaisa = Math.max(totalRetailReturnsFromHistoryPaisa, totalRetailReturnsFromSalesPaisa);
+  const totalRetailReturnsCount = Math.max(filteredReturnHistory.length, returnedSalesInvoices.length);
+
+  // Retail Sales Metrics:
+  // Gross sales before any discounts or returns (100% Unadjusted)
+  const totalRetailGrossPaisa = filteredSales.reduce(
+    (acc, s) => acc + (s.gross_total_paisa || (s.net_payable_paisa + (s.discount_paisa || 0))),
+    0
+  );
+  // Net sales revenue: User requirement - POS returns MUST cut from Net Sales Revenue
+  const totalRetailGrossPayablePaisa = filteredSales.reduce((acc, s) => acc + s.net_payable_paisa, 0);
+  const totalRetailNetRevenuePaisa = Math.max(0, totalRetailGrossPayablePaisa - totalRetailReturnsPaisa);
   const totalRetailDiscountsPaisa = filteredSales.reduce((acc, s) => acc + (s.discount_paisa || 0), 0);
   const totalRetailDiscountedInvoicesCount = filteredSales.filter((s) => (s.discount_paisa || 0) > 0).length;
   const totalRetailBottlesSold = filteredSales.reduce((acc, s) => acc + s.total_units, 0);
 
   // Wholesale Metrics:
-  const totalWholesaleBilledPaisa = filteredWholesaleInvoices.reduce((acc, w) => acc + w.net_total_paisa, 0);
+  const totalWholesaleGrossPaisa = filteredWholesaleInvoices.reduce((acc, w) => acc + w.net_total_paisa, 0);
+  const totalWholesaleBilledPaisa = totalWholesaleGrossPaisa;
   const totalWholesalePaidPaisa = filteredWholesaleInvoices.reduce((acc, w) => acc + w.paid_amount_paisa, 0);
   const totalWholesaleUdarPaisa = filteredWholesaleInvoices.reduce((acc, w) => acc + w.balance_due_paisa, 0);
   const totalAllCustomersUdarPaisa = wholesaleCustomers.reduce((acc, c) => acc + (c.current_balance_paisa || 0), 0);
@@ -243,9 +286,21 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
   const totalWholesaleUnits = filteredWholesaleInvoices.length;
 
   // Online Orders Metrics:
+  const totalOnlineGrossPaisa = filteredOnlineOrders.reduce(
+    (acc, o) => acc + (o.total_amount_paisa + (o.discount_paisa || 0)),
+    0
+  );
   const totalOnlineBilledPaisa = filteredOnlineOrders.reduce((acc, o) => acc + o.total_amount_paisa, 0);
-  const totalOnlineCollectedPaisa = filteredOnlineOrders.reduce((acc, o) => acc + (o.payment_status !== "RETURNED" ? o.advance_paid_paisa : 0), 0);
-  const totalOnlinePendingCodPaisa = filteredOnlineOrders.reduce((acc, o) => acc + (o.payment_status !== "RETURNED" ? o.cod_balance_paisa : 0), 0);
+  const totalOnlineNetCollectedPaisa = filteredOnlineOrders.reduce((acc, o) => {
+    if (o.payment_status === "RETURNED" || o.delivery_status === "RETURNED_RTO") {
+      return acc + Math.max(0, o.deduction_amount_paisa || 0);
+    }
+    return acc + Math.max(0, o.advance_paid_paisa - (o.refund_amount_paisa || 0));
+  }, 0);
+  const totalOnlinePendingCodPaisa = filteredOnlineOrders.reduce((acc, o) => {
+    if (o.payment_status === "RETURNED" || o.delivery_status === "RETURNED_RTO") return acc;
+    return acc + (o.cod_balance_paisa || 0);
+  }, 0);
   const totalOnlineDiscountsPaisa = filteredOnlineOrders.reduce((acc, o) => acc + (o.discount_paisa || 0), 0);
   const totalOnlineDiscountedOrdersCount = filteredOnlineOrders.filter((o) => (o.discount_paisa || 0) > 0).length;
   const totalOnlineUnits = filteredOnlineOrders.reduce((acc, o) => {
@@ -267,22 +322,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
   }, 0);
   const totalOnlineReturnsCount = returnedOnlineOrders.length;
 
-  // Retail Returns:
-  const returnedSalesInvoices = filteredSales.filter(
-    (s) => s.is_returned || s.return_status === "FULL" || s.return_status === "PARTIAL" || ((s.returned_units || 0) > 0)
-  );
-  const totalRetailReturnsPaisa = returnedSalesInvoices.reduce((acc, s) => {
-    const retUnits = s.returned_units || 0;
-    if (s.return_status === "FULL" || (s.total_units > 0 && retUnits >= s.total_units)) {
-      return acc + s.net_payable_paisa;
-    }
-    if (s.total_units > 0 && retUnits > 0) {
-      return acc + Math.round((s.net_payable_paisa * retUnits) / s.total_units);
-    }
-    return acc + s.net_payable_paisa;
-  }, 0);
-  const totalRetailReturnsCount = returnedSalesInvoices.length;
-
+  // Combined Channel Returns:
   let displayReturnsPaisa = 0;
   let displayReturnsCount = 0;
   if (channelFilter === "POS") {
@@ -300,29 +340,34 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
   }
 
   // Channel-Filtered Metrics for Header KPIs
+  let displayGrossRevenuePaisa = 0;
   let displayRealizedRevenuePaisa = 0;
   let displayDiscountsPaisa = 0;
   let displayUnitsSold = 0;
   let displayDiscountedCount = 0;
 
   if (channelFilter === "POS") {
+    displayGrossRevenuePaisa = totalRetailGrossPaisa;
     displayRealizedRevenuePaisa = totalRetailNetRevenuePaisa;
     displayDiscountsPaisa = totalRetailDiscountsPaisa;
     displayUnitsSold = totalRetailBottlesSold;
     displayDiscountedCount = totalRetailDiscountedInvoicesCount;
   } else if (channelFilter === "ONLINE") {
-    displayRealizedRevenuePaisa = totalOnlineCollectedPaisa;
+    displayGrossRevenuePaisa = totalOnlineGrossPaisa;
+    displayRealizedRevenuePaisa = totalOnlineNetCollectedPaisa;
     displayDiscountsPaisa = totalOnlineDiscountsPaisa;
     displayUnitsSold = totalOnlineUnits;
     displayDiscountedCount = totalOnlineDiscountedOrdersCount;
   } else if (channelFilter === "WHOLESALE") {
+    displayGrossRevenuePaisa = totalWholesaleGrossPaisa;
     displayRealizedRevenuePaisa = totalWholesalePaidPaisa;
     displayDiscountsPaisa = totalWholesaleDiscountsPaisa;
     displayUnitsSold = totalWholesaleUnits;
     displayDiscountedCount = totalWholesaleDiscountedCount;
   } else {
     // ALL Channels Combined
-    displayRealizedRevenuePaisa = totalRetailNetRevenuePaisa + totalWholesalePaidPaisa + totalOnlineCollectedPaisa;
+    displayGrossRevenuePaisa = totalRetailGrossPaisa + totalWholesaleGrossPaisa + totalOnlineGrossPaisa;
+    displayRealizedRevenuePaisa = totalRetailNetRevenuePaisa + totalWholesalePaidPaisa + totalOnlineNetCollectedPaisa;
     displayDiscountsPaisa = totalRetailDiscountsPaisa + totalWholesaleDiscountsPaisa + totalOnlineDiscountsPaisa;
     displayUnitsSold = totalRetailBottlesSold + totalWholesaleUnits + totalOnlineUnits;
     displayDiscountedCount = totalRetailDiscountedInvoicesCount + totalWholesaleDiscountedCount + totalOnlineDiscountedOrdersCount;
@@ -645,7 +690,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             <div>
               <h1 style="margin: 0; font-size: 20px; font-weight: 900; letter-spacing: 1px; color: #0f172a;">AMEER PERFUMES</h1>
               <div style="font-size: 10px; font-weight: 700; color: #b45309; text-transform: uppercase; letter-spacing: 0.5px;">Haute Parfumerie & Pure Concentrated Oils</div>
-              <div style="font-size: 9px; color: #475569; margin-top: 2px;">Main Branch Sports Complex Bannu | Contact: 03100988522</div>
+              <div style="font-size: 9px; color: #475569; margin-top: 2px;">Main Branch Sports Complex Bannu | Contact: 0329 9969277</div>
             </div>
           </div>
           <div style="text-align: right;">
@@ -656,12 +701,17 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </div>
         </div>
 
-        <!-- Executive KPI Cards Grid (2 rows of 4 cards) -->
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 16px;">
+        <!-- Executive KPI Cards Grid (5 columns x 2 rows = 10 cards) -->
+        <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; margin-bottom: 16px;">
           <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 8px;">
-            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #64748b;">Realized Sales Revenue</div>
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #475569;">Total Gross Sales</div>
+            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #0f172a; margin-top: 1px;">Rs. ${formatRs(displayGrossRevenuePaisa)}</div>
+            <div style="font-size: 7.5px; color: #64748b;">Unadjusted Topline Sales</div>
+          </div>
+          <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 6px 8px;">
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #166534;">Net Sales Revenue</div>
             <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #15803d; margin-top: 1px;">Rs. ${formatRs(displayRealizedRevenuePaisa)}</div>
-            <div style="font-size: 7.5px; color: #64748b;">Collected Funds</div>
+            <div style="font-size: 7.5px; color: #166534;">Net of Returns & Discounts</div>
           </div>
           <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 6px 8px;">
             <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #991b1b;">Customer Returns & RTO</div>
@@ -689,9 +739,14 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             <div style="font-size: 7.5px; color: #7e22ce;">Channel Volume</div>
           </div>
           <div style="background: #fff7ed; border: 1px solid #ffedd5; border-radius: 6px; padding: 6px 8px;">
-            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #c2410c;">Operating Outflows (Expenses & Wages)</div>
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #c2410c;">Operating Outflows</div>
             <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #ea580c; margin-top: 1px;">Rs. ${formatRs(totalExpensesPaisa + totalSalariesPaisa)}</div>
             <div style="font-size: 7.5px; color: #c2410c;">Petty: Rs. ${formatRs(totalExpensesPaisa)} | Salaries: Rs. ${formatRs(totalSalariesPaisa)}</div>
+          </div>
+          <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 8px;">
+            <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: #475569;">Staff Salaries Paid</div>
+            <div style="font-size: 13px; font-weight: 900; font-family: monospace; color: #d97706; margin-top: 1px;">Rs. ${formatRs(totalSalariesPaisa)}</div>
+            <div style="font-size: 7.5px; color: #475569;">${filteredSalaries.length} Salary Payouts</div>
           </div>
           <div style="background: ${netEstimatedMarginPaisa >= 0 ? "#f0fdf4" : "#fef2f2"}; border: 1px solid ${netEstimatedMarginPaisa >= 0 ? "#bbf7d0" : "#fecaca"}; border-radius: 6px; padding: 6px 8px;">
             <div style="font-size: 8px; font-weight: 800; text-transform: uppercase; color: ${netEstimatedMarginPaisa >= 0 ? "#166534" : "#991b1b"};">Net Operating Margin</div>
@@ -733,6 +788,22 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
               <td style="padding: 5px 4px; text-align: right; font-family: monospace; color: #b45309;">Rs. ${formatRs(totalSalesGross)}</td>
               <td></td>
             </tr>
+            ${totalRetailReturnsCount > 0 ? `
+            <tr style="background: #fef2f2; font-size: 9px; font-weight: 800; color: #991b1b; border-top: 1px dashed #fca5a5;">
+              <td colspan="6" style="padding: 4px; text-align: right; text-transform: uppercase;">Retail Returns & Refunds (${totalRetailReturnsCount} vouchers):</td>
+              <td style="padding: 4px; text-align: center;">-</td>
+              <td></td>
+              <td style="padding: 4px; text-align: right; font-family: monospace; color: #b91c1c;">-Rs. ${formatRs(totalRetailReturnsPaisa)}</td>
+              <td style="padding: 4px; text-align: center; font-size: 8px;">Deducted from Net</td>
+            </tr>
+            <tr style="background: #f0fdf4; font-size: 9.5px; font-weight: 900; color: #166534; border-top: 1px solid #86efac;">
+              <td colspan="6" style="padding: 5px 4px; text-align: right; text-transform: uppercase;">Net Realized Retail Sales:</td>
+              <td style="padding: 5px 4px; text-align: center;">-</td>
+              <td></td>
+              <td style="padding: 5px 4px; text-align: right; font-family: monospace; color: #15803d;">Rs. ${formatRs(totalRetailNetRevenuePaisa)}</td>
+              <td></td>
+            </tr>
+            ` : ""}
           </tfoot>
         </table>
         ` : ""}
@@ -999,8 +1070,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
     if (activeTab === "SALES") {
       reportTitle = "SALES & REVENUE AUDIT REPORT";
       const totalUnits = filteredSales.reduce((acc, s) => acc + s.total_units, 0);
-      const totalGross = filteredSales.reduce((acc, s) => acc + s.net_payable_paisa, 0);
-      const returnedInvoicesCount = filteredSales.filter((s) => s.is_returned).length;
+      const totalSalesBilledPaisa = filteredSales.reduce((acc, s) => acc + s.net_payable_paisa, 0);
 
       const rowsHtml = filteredSales
         .map((s, idx) => {
@@ -1065,7 +1135,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
               <div>
                 <h1 style="margin: 0; font-size: 20px; font-weight: 900; letter-spacing: 1px; color: #0f172a;">AMEER PERFUMES</h1>
                 <div style="font-size: 10px; font-weight: 700; color: #b45309; text-transform: uppercase; letter-spacing: 0.5px;">Haute Parfumerie & Pure Concentrated Oils</div>
-                <div style="font-size: 9.5px; color: #475569; margin-top: 2px;">Main Branch Sports Complex Bannu | Contact: 03100988522</div>
+                <div style="font-size: 9.5px; color: #475569; margin-top: 2px;">Main Branch Sports Complex Bannu | Contact: 0329 9969277</div>
               </div>
             </div>
             <div style="text-align: right;">
@@ -1076,27 +1146,37 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             </div>
           </div>
 
-          <!-- KPI Summary Cards -->
-          <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 16px;">
-            <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 10px;">
-              <div style="font-size: 9px; font-weight: 800; text-transform: uppercase; color: #64748b;">Total Invoices</div>
-              <div style="font-size: 16px; font-weight: 900; font-family: monospace; color: #0f172a; margin-top: 2px;">${filteredSales.length}</div>
+          <!-- KPI Summary Cards (6 cards) -->
+          <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 16px;">
+            <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 9px;">
+              <div style="font-size: 8.5px; font-weight: 800; text-transform: uppercase; color: #475569;">Gross Sales</div>
+              <div style="font-size: 14px; font-weight: 900; font-family: monospace; color: #0f172a; margin-top: 1px;">Rs. ${formatRs(totalRetailGrossPaisa)}</div>
+              <div style="font-size: 7.5px; color: #64748b;">Unadjusted Billed</div>
             </div>
-            <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 10px;">
-              <div style="font-size: 9px; font-weight: 800; text-transform: uppercase; color: #64748b;">Bottles Sold</div>
-              <div style="font-size: 16px; font-weight: 900; font-family: monospace; color: #0f172a; margin-top: 2px;">${totalUnits} Units</div>
+            <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 7px 9px;">
+              <div style="font-size: 8.5px; font-weight: 800; text-transform: uppercase; color: #166534;">Net Sales Revenue</div>
+              <div style="font-size: 14px; font-weight: 900; font-family: monospace; color: #15803d; margin-top: 1px;">Rs. ${formatRs(totalRetailNetRevenuePaisa)}</div>
+              <div style="font-size: 7.5px; color: #166534;">Net of Returns</div>
             </div>
-            <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 8px 10px;">
-              <div style="font-size: 9px; font-weight: 800; text-transform: uppercase; color: #991b1b;">Discounts Given</div>
-              <div style="font-size: 16px; font-weight: 900; font-family: monospace; color: #dc2626; margin-top: 2px;">Rs. ${formatRs(totalRetailDiscountsPaisa)}</div>
+            <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 7px 9px;">
+              <div style="font-size: 8.5px; font-weight: 800; text-transform: uppercase; color: #991b1b;">Retail Returns</div>
+              <div style="font-size: 14px; font-weight: 900; font-family: monospace; color: #b91c1c; margin-top: 1px;">-Rs. ${formatRs(totalRetailReturnsPaisa)}</div>
+              <div style="font-size: 7.5px; color: #991b1b;">${totalRetailReturnsCount} Vouchers</div>
             </div>
-            <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 10px;">
-              <div style="font-size: 9px; font-weight: 800; text-transform: uppercase; color: #64748b;">Return Audits</div>
-              <div style="font-size: 16px; font-weight: 900; font-family: monospace; color: #b91c1c; margin-top: 2px;">${returnedInvoicesCount} Invoices</div>
+            <div style="background: #fdf2f8; border: 1px solid #fbcfe8; border-radius: 6px; padding: 7px 9px;">
+              <div style="font-size: 8.5px; font-weight: 800; text-transform: uppercase; color: #be185d;">Discounts Given</div>
+              <div style="font-size: 14px; font-weight: 900; font-family: monospace; color: #db2777; margin-top: 1px;">Rs. ${formatRs(totalRetailDiscountsPaisa)}</div>
+              <div style="font-size: 7.5px; color: #be185d;">${totalRetailDiscountedInvoicesCount} Orders</div>
             </div>
-            <div style="background: #fefce8; border: 1px solid #fef08a; border-radius: 6px; padding: 8px 10px;">
-              <div style="font-size: 9px; font-weight: 800; text-transform: uppercase; color: #854d0e;">Net Revenue Realized</div>
-              <div style="font-size: 16px; font-weight: 900; font-family: monospace; color: #b45309; margin-top: 2px;">Rs. ${formatRs(totalGross)}</div>
+            <div style="background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 6px; padding: 7px 9px;">
+              <div style="font-size: 8.5px; font-weight: 800; text-transform: uppercase; color: #7e22ce;">Bottles Sold</div>
+              <div style="font-size: 14px; font-weight: 900; font-family: monospace; color: #9333ea; margin-top: 1px;">${totalUnits} Units</div>
+              <div style="font-size: 7.5px; color: #7e22ce;">Volume</div>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 9px;">
+              <div style="font-size: 8.5px; font-weight: 800; text-transform: uppercase; color: #64748b;">Total Invoices</div>
+              <div style="font-size: 14px; font-weight: 900; font-family: monospace; color: #0f172a; margin-top: 1px;">${filteredSales.length}</div>
+              <div style="font-size: 7.5px; color: #64748b;">Transactions</div>
             </div>
           </div>
 
@@ -1121,12 +1201,28 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             </tbody>
             <tfoot>
               <tr style="background: #f1f5f9; font-size: 10px; font-weight: 800; border-top: 2px solid #0f172a;">
-                <td colspan="6" style="padding: 8px 6px; text-align: right; text-transform: uppercase;">Grand Total (${filteredSales.length} Invoices):</td>
+                <td colspan="6" style="padding: 8px 6px; text-align: right; text-transform: uppercase;">Total Billed Sales (${filteredSales.length} Invoices):</td>
                 <td style="padding: 8px 6px; text-align: center; font-family: monospace;">${totalUnits}</td>
                 <td></td>
-                <td style="padding: 8px 6px; text-align: right; font-family: monospace; color: #b45309; font-size: 11px;">Rs. ${formatRs(totalGross)}</td>
+                <td style="padding: 8px 6px; text-align: right; font-family: monospace; color: #b45309; font-size: 11px;">Rs. ${formatRs(totalSalesBilledPaisa)}</td>
                 <td></td>
               </tr>
+              ${totalRetailReturnsCount > 0 ? `
+              <tr style="background: #fef2f2; font-size: 9.5px; font-weight: 800; color: #991b1b; border-top: 1px dashed #fca5a5;">
+                <td colspan="6" style="padding: 6px; text-align: right; text-transform: uppercase;">Retail Returns & Refunds (${totalRetailReturnsCount} vouchers):</td>
+                <td style="padding: 6px; text-align: center;">-</td>
+                <td></td>
+                <td style="padding: 6px; text-align: right; font-family: monospace; color: #b91c1c;">-Rs. ${formatRs(totalRetailReturnsPaisa)}</td>
+                <td style="padding: 6px; text-align: center; font-size: 8.5px;">Deducted from Net</td>
+              </tr>
+              <tr style="background: #f0fdf4; font-size: 10px; font-weight: 900; color: #166534; border-top: 1.5px solid #86efac;">
+                <td colspan="6" style="padding: 7px 6px; text-align: right; text-transform: uppercase;">Net Realized Retail Sales:</td>
+                <td style="padding: 7px 6px; text-align: center;">-</td>
+                <td></td>
+                <td style="padding: 7px 6px; text-align: right; font-family: monospace; color: #15803d; font-size: 11.5px;">Rs. ${formatRs(totalRetailNetRevenuePaisa)}</td>
+                <td></td>
+              </tr>
+              ` : ""}
             </tfoot>
           </table>
 
@@ -1205,7 +1301,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
               <div>
                 <h1 style="margin: 0; font-size: 20px; font-weight: 900; letter-spacing: 1px; color: #0f172a;">AMEER PERFUMES</h1>
                 <div style="font-size: 10px; font-weight: 700; color: #b45309; text-transform: uppercase; letter-spacing: 0.5px;">Haute Parfumerie & Pure Concentrated Oils</div>
-                <div style="font-size: 9.5px; color: #475569; margin-top: 2px;">Main Branch Sports Complex Bannu | Contact: 03100988522</div>
+                <div style="font-size: 9.5px; color: #475569; margin-top: 2px;">Main Branch Sports Complex Bannu | Contact: 0329 9969277</div>
               </div>
             </div>
             <div style="text-align: right;">
@@ -1349,7 +1445,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
               <div>
                 <h1 style="margin: 0; font-size: 20px; font-weight: 900; letter-spacing: 1px; color: #0f172a;">AMEER PERFUMES</h1>
                 <div style="font-size: 10px; font-weight: 700; color: #b45309; text-transform: uppercase; letter-spacing: 0.5px;">Haute Parfumerie & Pure Concentrated Oils</div>
-                <div style="font-size: 9.5px; color: #475569; margin-top: 2px;">Main Branch Sports Complex Bannu | Contact: 03100988522</div>
+                <div style="font-size: 9.5px; color: #475569; margin-top: 2px;">Main Branch Sports Complex Bannu | Contact: 0329 9969277</div>
               </div>
             </div>
             <div style="text-align: right;">
@@ -1587,29 +1683,49 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
         </div>
       )}
 
-      {/* Executive KPI Summary Cards (Arranged in 2 Rows of 4 Cards) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        {/* Card 1: Net Sales Revenue (Realized Cash) */}
+      {/* Executive KPI Summary Cards (Arranged in 2 Rows of 5 Cards = 10 Professional Cards) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
+        {/* Card 0: Total Gross Sales (Pure 100% Unadjusted Sales - Zero Deductions) */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-xs">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono font-bold">
+            <span>Total Gross Sales</span>
+            <Landmark className="w-4 h-4 text-amber-500" />
+          </div>
+          <span className="text-lg sm:text-xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-1 block">
+            Rs. {formatRs(displayGrossRevenuePaisa)}
+          </span>
+          <span className="text-[10px] text-slate-500 font-mono mt-0.5 block truncate" title="Pure Unadjusted Billed Revenue (No deductions: Zero discount, return, salary, or expense cuts)">
+            {channelFilter === "POS"
+              ? "Retail Counter Gross"
+              : channelFilter === "ONLINE"
+              ? "Online Gross Billed"
+              : channelFilter === "WHOLESALE"
+              ? "Wholesale Billed Invoices"
+              : `Retail: Rs. ${formatRs(totalRetailGrossPaisa)} | W.Sale: Rs. ${formatRs(totalWholesaleGrossPaisa)} | Onl: Rs. ${formatRs(totalOnlineGrossPaisa)}`}
+          </span>
+        </div>
+
+        {/* Card 1: Net Sales Revenue (Realized Cash net of Returns) */}
+        <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-xs">
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono font-bold">
             <span>Net Sales Revenue</span>
             <TrendingUp className="w-4 h-4 text-emerald-500" />
           </div>
           <span className="text-lg sm:text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1 block">
             Rs. {formatRs(displayRealizedRevenuePaisa)}
           </span>
-          <span className="text-[10px] text-slate-500 font-mono mt-0.5 block truncate" title={`Retail: Rs. ${formatRs(totalRetailNetRevenuePaisa)} • Wholesale Realized: Rs. ${formatRs(totalWholesalePaidPaisa)} • Online Collected: Rs. ${formatRs(totalOnlineCollectedPaisa)}`}>
+          <span className="text-[10px] text-slate-500 font-mono mt-0.5 block truncate" title={`Retail Net: Rs. ${formatRs(totalRetailNetRevenuePaisa)} • Wholesale Realized: Rs. ${formatRs(totalWholesalePaidPaisa)} • Online Net Collected: Rs. ${formatRs(totalOnlineNetCollectedPaisa)}`}>
             {channelFilter === "POS"
-              ? "Retail Counter Realized"
+              ? "Retail Counter Realized (Net of Returns)"
               : channelFilter === "ONLINE"
-              ? "Online Collected (Advances)"
+              ? "Online Realized Net Advances"
               : channelFilter === "WHOLESALE"
               ? "Wholesale Realized Cash"
-              : `Retail: Rs. ${formatRs(totalRetailNetRevenuePaisa)} | W.Sale: Rs. ${formatRs(totalWholesalePaidPaisa)} | Onl: Rs. ${formatRs(totalOnlineCollectedPaisa)}`}
+              : `Retail: Rs. ${formatRs(totalRetailNetRevenuePaisa)} | W.Sale: Rs. ${formatRs(totalWholesalePaidPaisa)} | Onl: Rs. ${formatRs(totalOnlineNetCollectedPaisa)}`}
           </span>
         </div>
 
-        {/* Card: Customer Returns & Parcel RTO */}
+        {/* Card 2: Customer Returns & Parcel RTO */}
         <div className="bg-rose-500/5 dark:bg-rose-950/20 border border-rose-500/30 p-3.5 rounded-xl shadow-xs">
           <div className="flex items-center justify-between text-xs text-rose-700 dark:text-rose-400 uppercase font-mono font-bold">
             <span>Customer Returns & RTO</span>
@@ -1623,7 +1739,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </span>
         </div>
 
-        {/* Card 2: Wholesale Credit (Udar / Pending Receivables) */}
+        {/* Card 3: Wholesale Credit (Udar / Pending Receivables) */}
         <div className="bg-amber-500/5 dark:bg-amber-950/20 border border-amber-500/30 p-3.5 rounded-xl shadow-xs">
           <div className="flex items-center justify-between text-xs text-amber-700 dark:text-amber-400 uppercase font-mono font-bold">
             <span>Wholesale Credit (Udar)</span>
@@ -1639,7 +1755,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </span>
         </div>
 
-        {/* Card 3: Online Orders Pending (COD Receivables) */}
+        {/* Card 4: Online Orders Pending (COD Receivables) */}
         <div className="bg-blue-500/5 dark:bg-blue-950/20 border border-blue-500/30 p-3.5 rounded-xl shadow-xs">
           <div className="flex items-center justify-between text-xs text-blue-700 dark:text-blue-400 uppercase font-mono font-bold">
             <span>Online Orders Pending (COD)</span>
@@ -1651,13 +1767,13 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           <span className="text-[10px] text-blue-700/80 dark:text-blue-400/80 font-mono mt-0.5 block truncate">
             {channelFilter === "POS" || channelFilter === "WHOLESALE"
               ? "Not applicable for this channel"
-              : `${filteredOnlineOrders.filter(o => o.cod_balance_paisa > 0 && o.payment_status !== "RETURNED").length} Pending Shipments / Courier COD`}
+              : `${filteredOnlineOrders.filter(o => o.cod_balance_paisa > 0 && o.payment_status !== "RETURNED" && o.delivery_status !== "RETURNED_RTO").length} Pending Shipments / Courier COD`}
           </span>
         </div>
 
-        {/* Card 4: Discounts Given */}
+        {/* Card 5: Discounts Given */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-xs">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono font-bold">
             <span>Discounts Given</span>
             <Percent className="w-4 h-4 text-rose-500" />
           </div>
@@ -1669,9 +1785,9 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </span>
         </div>
 
-        {/* Card 5: Bottles / Units Sold */}
+        {/* Card 6: Bottles / Units Sold */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-xs">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono font-bold">
             <span>Bottles Sold</span>
             <Package className="w-4 h-4 text-purple-500" />
           </div>
@@ -1683,9 +1799,9 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </span>
         </div>
 
-        {/* Card 6: Petty Expenses */}
+        {/* Card 7: Petty Expenses */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-xs">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono font-bold">
             <span>Petty Expenses</span>
             <Banknote className="w-4 h-4 text-rose-500" />
           </div>
@@ -1697,9 +1813,9 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </span>
         </div>
 
-        {/* Card 7: Staff Salaries Paid */}
+        {/* Card 8: Staff Salaries Paid */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-xs">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono font-bold">
             <span>Staff Salaries Paid</span>
             <BadgeDollarSign className="w-4 h-4 text-amber-500" />
           </div>
@@ -1711,9 +1827,9 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
           </span>
         </div>
 
-        {/* Card 8: Net Operating Margin */}
+        {/* Card 9: Net Operating Margin */}
         <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-xs">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono">
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 uppercase font-mono font-bold">
             <span>Net Operating Margin</span>
             <Receipt className="w-4 h-4 text-blue-500" />
           </div>

@@ -7761,6 +7761,30 @@ impl DatabaseManager {
             }
         }
 
+        // Query wholesale invoices for the selected period (Order count, Total Invoiced Net Billed Paisa, Units)
+        let (ws_orders, ws_rev): (i64, i64) = conn.query_row(
+            &format!("
+                SELECT 
+                    COUNT(*),
+                    COALESCE(SUM(net_total_paisa), 0)
+                FROM wholesale_invoices wi
+                WHERE is_voided = 0 AND {};
+            ", wi_cond_wi),
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?))
+        ).unwrap_or((0, 0));
+
+        let ws_units: i64 = conn.query_row(
+            &format!("
+                SELECT COALESCE(SUM(wii.quantity), 0)
+                FROM wholesale_invoice_items wii
+                JOIN wholesale_invoices wi ON wii.wholesale_invoice_id = wi.wholesale_invoice_id
+                WHERE wi.is_voided = 0 AND {};
+            ", wi_cond_wi),
+            [],
+            |r| r.get(0)
+        ).unwrap_or(0);
+
         let channel_breakdown = vec![
             ChannelMetricDto {
                 channel: "SHOP".to_string(),
@@ -7779,6 +7803,12 @@ impl DatabaseManager {
                 order_count: web_orders,
                 revenue_paisa: web_rev,
                 total_units: web_units,
+            },
+            ChannelMetricDto {
+                channel: "WHOLESALE".to_string(),
+                order_count: ws_orders,
+                revenue_paisa: ws_rev,
+                total_units: ws_units,
             },
         ];
 

@@ -26,6 +26,7 @@ import {
   Wallet,
   FlaskConical,
   Truck,
+  Briefcase,
 } from "lucide-react";
 
 interface OwnerDashboardProps {
@@ -375,7 +376,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                     </Badge>
                   </h3>
                   <p className="text-[11px] text-slate-500">
-                    Live revenue, order count, and percentage share across Shop Walk-in, WhatsApp Direct, Website E-Store
+                    Live revenue, order count, and percentage share across Shop Walk-in, WhatsApp Direct, Website E-Store, and Wholesale B2B
                   </p>
                 </div>
               </div>
@@ -387,6 +388,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                 { key: "SHOP", label: "Shop Walk-In", icon: Store, color: "text-amber-500 bg-amber-500/10", border: "border-amber-500/20" },
                 { key: "WHATSAPP", label: "WhatsApp Orders", icon: Smartphone, color: "text-emerald-500 bg-emerald-500/10", border: "border-emerald-500/20" },
                 { key: "WEBSITE", label: "Website E-Store", icon: Globe, color: "text-blue-500 bg-blue-500/10", border: "border-blue-500/20" },
+                { key: "WHOLESALE", label: "Wholesale (B2B)", icon: Briefcase, color: "text-indigo-500 bg-indigo-500/10", border: "border-indigo-500/20" },
               ];
 
               const dataWithMetrics = channels.map((c) => {
@@ -395,6 +397,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                   if (c.key === "SHOP") return ch === "SHOP" || ch === "WALK_IN" || ch === "STORE" || ch === "COUNTER";
                   if (c.key === "WHATSAPP") return ch === "WHATSAPP" || ch === "WA";
                   if (c.key === "WEBSITE") return ch === "WEBSITE" || ch === "WEB" || ch === "ONLINE";
+                  if (c.key === "WHOLESALE") return ch === "WHOLESALE" || ch === "WS" || ch === "B2B";
                   return ch === c.key;
                 });
                 const orderCount = matches.reduce((sum, m) => sum + m.order_count, 0);
@@ -413,8 +416,8 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
               const totalChannelUnits = dataWithMetrics.reduce((sum, item) => sum + item.totalUnits, 0);
 
               // Find top channel by revenue
-              const topRevChannel = [...dataWithMetrics].sort((a, b) => b.revPaisa - a.revPaisa)[0];
-              const topOrderChannel = [...dataWithMetrics].sort((a, b) => b.orderCount - a.orderCount)[0];
+              const topRevChannel = [...dataWithMetrics].sort((a, b) => b.revPaisa - a.revPaisa)[0] || dataWithMetrics[0];
+              const topOrderChannel = [...dataWithMetrics].sort((a, b) => b.orderCount - a.orderCount)[0] || dataWithMetrics[0];
 
               return (
                 <div className="space-y-4">
@@ -438,7 +441,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                               {totalChannelRevPaisa > 0 ? ((topRevChannel.revPaisa / totalChannelRevPaisa) * 100).toFixed(1) : 0}% of all revenue) across {topRevChannel.orderCount} order{topRevChannel.orderCount === 1 ? "" : "s"} ({topRevChannel.totalUnits} unit{topRevChannel.totalUnits === 1 ? "" : "s"}).
                             </>
                           ) : (
-                            "Start ringing up orders from POS, WhatsApp, or Website to see live ranking."
+                            "Start ringing up orders from POS, WhatsApp, Website, or Wholesale to see live ranking."
                           )}
                         </p>
                       </div>
@@ -461,8 +464,8 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ status: _status 
                     </div>
                   </div>
 
-                  {/* 3 Channel Telemetry Cards */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* 4 Channel Telemetry Cards (Shop, WhatsApp, Website, Wholesale) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     {dataWithMetrics.map((c) => {
                       const Icon = c.icon;
                       const sharePct = totalChannelRevPaisa > 0 ? ((c.revPaisa / totalChannelRevPaisa) * 100).toFixed(1) : "0.0";

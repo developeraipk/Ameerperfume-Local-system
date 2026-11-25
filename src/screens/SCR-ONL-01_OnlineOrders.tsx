@@ -335,10 +335,13 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     if (o.payment_status === "RETURNED" || o.delivery_status === "RETURNED_RTO") {
       return o.deduction_amount_paisa || 0;
     }
+    const netAdvance = Math.max(0, (o.advance_paid_paisa || 0) - (o.refund_amount_paisa || 0));
     if (o.payment_status === "PAID") {
+      if ((o.refund_amount_paisa || 0) > 0) {
+        return Math.min(o.total_amount_paisa || 0, netAdvance > 0 ? netAdvance : (o.total_amount_paisa || 0));
+      }
       return o.total_amount_paisa || 0;
     }
-    const netAdvance = Math.max(0, (o.advance_paid_paisa || 0) - (o.refund_amount_paisa || 0));
     const codReceived = Math.max(0, (o.total_amount_paisa || 0) - (o.cod_balance_paisa || 0) - netAdvance);
     return netAdvance + codReceived;
   };
@@ -569,6 +572,42 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     );
   };
 
+  // Allocate total order discount to highest-priced items first so prices stay clean and clear
+  const allocateDiscountToHighestItem = (
+    items: OnlineOrderItem[],
+    totalDiscountPaisa: number
+  ): OnlineOrderItem[] => {
+    if (items.length === 0 || totalDiscountPaisa <= 0) {
+      return items.map((it) => ({ ...it, discount_paisa: it.discount_paisa || 0 }));
+    }
+    const existingSum = items.reduce((s, it) => s + (it.discount_paisa || 0), 0);
+    if (existingSum === totalDiscountPaisa) {
+      return items;
+    }
+    const prepared = items.map((it, idx) => ({
+      idx,
+      lineTotal: it.line_total_paisa || (it.unit_price_paisa * (it.quantity || 1)),
+    }));
+    prepared.sort((a, b) => b.lineTotal - a.lineTotal);
+
+    let remaining = totalDiscountPaisa;
+    const discMap = new Map<number, number>();
+    for (const p of prepared) {
+      if (remaining <= 0) {
+        discMap.set(p.idx, 0);
+      } else {
+        const d = Math.min(remaining, p.lineTotal);
+        discMap.set(p.idx, d);
+        remaining -= d;
+      }
+    }
+
+    return items.map((it, idx) => ({
+      ...it,
+      discount_paisa: discMap.get(idx) || 0,
+    }));
+  };
+
   // Computations for New Order (Gross items subtotal, offer bundle discounts, special discount)
   const newOrderSubtotalPaisa = orderItems.reduce((sum, it) => sum + it.line_total_paisa, 0);
   const bundleDiscountPaisa = orderItems.reduce((sum, it) => sum + (it.discount_paisa || 0), 0);
@@ -578,6 +617,11 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const newOrderTotalPaisa = Math.max(0, newOrderSubtotalPaisa + deliveryPaisa - totalOrderDiscountPaisa);
   const advancePaisa = Math.min(newOrderTotalPaisa, Math.max(0, Math.round((parseFloat(advancePaidRupees) || 0) * 100)));
   const codBalancePaisa = Math.max(0, newOrderTotalPaisa - advancePaisa);
+
+  const displayedOrderItems = useMemo(
+    () => allocateDiscountToHighestItem(orderItems, totalOrderDiscountPaisa),
+    [orderItems, totalOrderDiscountPaisa]
+  );
 
   // Submit New Order
   const handleCreateOrder = async (e: React.FormEvent) => {
@@ -593,13 +637,15 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
 
     try {
       setLoading(true);
+      const finalizedItems = allocateDiscountToHighestItem(orderItems, totalOrderDiscountPaisa);
+
       const payload: CreateOnlineOrderPayload = {
         channel: newChannel,
         customer_name: custName.trim() || "Valued Online Customer",
         customer_phone: custPhone.trim(),
         shipping_address: custAddress.trim() || "Address pending dispatch",
         city: custCity.trim() || "Pakistan",
-        items_json: JSON.stringify(orderItems),
+        items_json: JSON.stringify(finalizedItems),
         subtotal_paisa: newOrderSubtotalPaisa,
         delivery_charges_paisa: deliveryPaisa,
         discount_paisa: totalOrderDiscountPaisa,
@@ -838,11 +884,22 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
         return sum + activeUnits * unitPrice;
       }, 0);
 
+      // Active remaining discount belongs ONLY to unreturned units
+      const activeItemsDiscountPaisa = isAllReturned
+        ? 0
+        : updatedAllItems.reduce((sum, it) => {
+            const activeUnits = Math.max(0, (it.quantity || 1) - (it.returned_quantity || 0));
+            const totalOrdered = it.quantity || 1;
+            const itemDisc = it.discount_paisa || 0;
+            const activeItemDisc = totalOrdered > 0 ? Math.round((itemDisc * activeUnits) / totalOrdered) : 0;
+            return sum + activeItemDisc;
+          }, 0);
+
       const newTotalPaisa = isAllReturned
         ? 0
         : Math.max(
             0,
-            activeItemsSubtotalPaisa + selectedOrder.delivery_charges_paisa - selectedOrder.discount_paisa
+            activeItemsSubtotalPaisa + (isAllReturned ? 0 : selectedOrder.delivery_charges_paisa) - activeItemsDiscountPaisa
           );
 
       const payload: MarkOnlineReturnPayload = {
@@ -856,6 +913,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
         remaining_items_json: JSON.stringify(updatedAllItems),
         new_total_paisa: newTotalPaisa,
         new_subtotal_paisa: activeItemsSubtotalPaisa,
+        new_discount_paisa: activeItemsDiscountPaisa,
         is_partial: !isAllReturned,
       };
 
@@ -2368,13 +2426,13 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {orderItems.map((it, idx) => (
+                        {displayedOrderItems.map((it, idx) => (
                           <tr key={idx}>
                             <td className="p-2 font-sans font-semibold">
                               <div>{it.name}</div>
                               {it.discount_paisa && it.discount_paisa > 0 ? (
                                 <span className="text-[10px] text-amber-600 dark:text-amber-400 font-mono font-normal block">
-                                  Deal Savings: -Rs. {formatRs(it.discount_paisa)}
+                                  Discount Allocated: -Rs. {formatRs(it.discount_paisa)}
                                 </span>
                               ) : null}
                             </td>

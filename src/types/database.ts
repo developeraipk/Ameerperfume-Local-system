@@ -1424,5 +1424,6 @@ export interface MarkOnlineReturnPayload {
   remaining_items_json?: string;
   new_total_paisa?: number;
   new_subtotal_paisa?: number;
+  new_discount_paisa?: number;
   is_partial?: boolean;
 }

@@ -857,6 +857,14 @@ impl DatabaseManager {
             WHERE discount_paisa = 0 AND items_json LIKE '%DEAL 1%';
         ", []);
 
+        let _ = conn.execute("
+            UPDATE online_orders
+            SET subtotal_paisa = 130000,
+                discount_paisa = 0,
+                total_amount_paisa = 130000
+            WHERE order_number = 'WEB-20261125-0001' AND delivery_status = 'PARTIAL_RETURN';
+        ", []);
+
         Ok((current_version.max(231), current_version < 231))
     }
 
@@ -2497,7 +2505,7 @@ impl DatabaseManager {
         });
 
         match inv_res {
-            Ok((inv_id, inv_num, inv_date, cust_phone, term_id, net_pay, is_voided, gross_total)) => {
+            Ok((inv_id, inv_num, inv_date, cust_phone, term_id, net_pay, is_voided, _gross_total)) => {
                 let mut items_stmt = conn.prepare("
                     SELECT invoice_item_id, COALESCE(finished_product_id, attar_id, ''), product_name, 
                            quantity, returned_quantity, unit_selling_price_paisa, unit_cost_paisa, line_total_paisa
@@ -2535,20 +2543,32 @@ impl DatabaseManager {
                 }
 
                 let total_lines_paisa: i64 = raw_items.iter().map(|it| it.line_total).sum();
-                let denominator = if total_lines_paisa > 0 { total_lines_paisa } else { gross_total.max(1) };
+                let total_invoice_discount = if total_lines_paisa > net_pay { (total_lines_paisa - net_pay).max(0) } else { 0 };
+
+                let mut sorted_indices: Vec<usize> = (0..raw_items.len()).collect();
+                sorted_indices.sort_by(|&a, &b| raw_items[b].line_total.cmp(&raw_items[a].line_total));
+
+                let mut remaining_disc = total_invoice_discount;
+                let mut allocated_discounts = vec![0i64; raw_items.len()];
+                for &idx in &sorted_indices {
+                    if remaining_disc <= 0 {
+                        allocated_discounts[idx] = 0;
+                    } else {
+                        let d = remaining_disc.min(raw_items[idx].line_total);
+                        allocated_discounts[idx] = d;
+                        remaining_disc -= d;
+                    }
+                }
 
                 let mut items = Vec::new();
-                for it in raw_items {
+                for (idx, it) in raw_items.into_iter().enumerate() {
                     let qty = it.quantity;
                     let ret_qty = it.returned_quantity;
                     let unit_selling = it.unit_selling;
                     let line_total = it.line_total;
 
-                    let net_line_paid = if denominator > 0 && net_pay < denominator {
-                        ((line_total as f64 / denominator as f64) * net_pay as f64).round() as i64
-                    } else {
-                        line_total
-                    };
+                    let item_disc = allocated_discounts[idx];
+                    let net_line_paid = (line_total - item_disc).max(0);
 
                     let effective_unit_price = if qty > 0 { net_line_paid / qty as i64 } else { unit_selling };
                     let orig_catalog_unit_price = if qty > 0 && line_total > 0 {
@@ -6883,20 +6903,26 @@ impl DatabaseManager {
         // 2. Perfume vs Attar sales, orders count & units count for selected period (Retail + Wholesale, Net of discounts and returns)
         let (net_retail_perfume, net_retail_attar, retail_perfume_orders, retail_attar_orders, retail_perfume_units, retail_attar_units): (i64, i64, i64, i64, i64, i64) = conn.query_row(
             &format!(
-                "SELECT
-                   COALESCE(SUM(CASE WHEN item_type = 'PERFUME' AND measurement_unit != 'CUSTOM_ML' AND sii.product_name NOT LIKE '%Tester%' THEN 
-                       (line_total_paisa - CAST(ROUND(1.0 * COALESCE(si.special_discount_paisa, 0) * line_total_paisa / MAX(si.gross_total_paisa, 1)) AS INTEGER))
+                "WITH ranked_items AS (
+                   SELECT sii.*,
+                          ROW_NUMBER() OVER (PARTITION BY sii.invoice_id ORDER BY sii.line_total_paisa DESC) as rn
+                   FROM sales_invoice_items sii
+                   JOIN sales_invoices si ON sii.invoice_id = si.invoice_id
+                   WHERE si.is_voided = 0 AND {}
+                 )
+                 SELECT
+                   COALESCE(SUM(CASE WHEN item_type = 'PERFUME' AND measurement_unit != 'CUSTOM_ML' AND product_name NOT LIKE '%Tester%' THEN 
+                       (line_total_paisa - CASE WHEN rn = 1 THEN COALESCE(si.special_discount_paisa, 0) ELSE 0 END)
                    ELSE 0 END), 0),
                    COALESCE(SUM(CASE WHEN item_type = 'ATTAR' THEN 
-                       (line_total_paisa - CAST(ROUND(1.0 * COALESCE(si.special_discount_paisa, 0) * line_total_paisa / MAX(si.gross_total_paisa, 1)) AS INTEGER))
+                       (line_total_paisa - CASE WHEN rn = 1 THEN COALESCE(si.special_discount_paisa, 0) ELSE 0 END)
                    ELSE 0 END), 0),
-                   COALESCE(COUNT(DISTINCT CASE WHEN item_type = 'PERFUME' AND measurement_unit != 'CUSTOM_ML' AND sii.product_name NOT LIKE '%Tester%' THEN sii.invoice_id ELSE NULL END), 0),
-                   COALESCE(COUNT(DISTINCT CASE WHEN item_type = 'ATTAR' THEN sii.invoice_id ELSE NULL END), 0),
-                   COALESCE(SUM(CASE WHEN item_type = 'PERFUME' AND measurement_unit != 'CUSTOM_ML' AND sii.product_name NOT LIKE '%Tester%' THEN sii.quantity ELSE 0 END), 0),
-                   COALESCE(SUM(CASE WHEN item_type = 'ATTAR' THEN sii.quantity ELSE 0 END), 0)
-                 FROM sales_invoice_items sii
-                 JOIN sales_invoices si ON sii.invoice_id = si.invoice_id
-                 WHERE si.is_voided = 0 AND {};",
+                   COALESCE(COUNT(DISTINCT CASE WHEN item_type = 'PERFUME' AND measurement_unit != 'CUSTOM_ML' AND product_name NOT LIKE '%Tester%' THEN ri.invoice_id ELSE NULL END), 0),
+                   COALESCE(COUNT(DISTINCT CASE WHEN item_type = 'ATTAR' THEN ri.invoice_id ELSE NULL END), 0),
+                   COALESCE(SUM(CASE WHEN item_type = 'PERFUME' AND measurement_unit != 'CUSTOM_ML' AND product_name NOT LIKE '%Tester%' THEN ri.quantity ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN item_type = 'ATTAR' THEN ri.quantity ELSE 0 END), 0)
+                 FROM ranked_items ri
+                 JOIN sales_invoices si ON ri.invoice_id = si.invoice_id;",
                 inv_cond_si
             ),
             [],
@@ -7028,6 +7054,18 @@ impl DatabaseManager {
                     };
 
                     if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
+                        let any_item_has_disc = parsed.iter().any(|it| it.get("discount_paisa").and_then(|d| d.as_i64()).unwrap_or(0) > 0);
+                        let max_ltotal_idx = if !any_item_has_disc && o_subtotal > o_total {
+                            parsed.iter().enumerate().max_by_key(|(_, it)| it.get("line_total_paisa").and_then(|l| l.as_i64()).unwrap_or(0)).map(|(i, _)| i)
+                        } else {
+                            None
+                        };
+                        let legacy_order_discount = if !any_item_has_disc && o_subtotal > o_total {
+                            (o_subtotal - o_total).max(0)
+                        } else {
+                            0
+                        };
+
                         // First pass: identify returned items, their exact returned units, and compute total returned items value
                         let mut ret_items_meta = Vec::new();
                         let mut total_ret_val_paisa = 0i64;
@@ -7077,11 +7115,15 @@ impl DatabaseManager {
                                 .unwrap_or("Fragrance");
                             let qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
                             let raw_ltotal = it.get("line_total_paisa").and_then(|l| l.as_i64()).unwrap_or(0);
-                            let ltotal = if o_subtotal > 0 && o_total < o_subtotal {
-                                (raw_ltotal as f64 * (o_total as f64 / o_subtotal as f64)).round() as i64
+
+                            let item_disc = if any_item_has_disc {
+                                it.get("discount_paisa").and_then(|d| d.as_i64()).unwrap_or(0)
+                            } else if Some(idx) == max_ltotal_idx {
+                                legacy_order_discount
                             } else {
-                                raw_ltotal
+                                0
                             };
+                            let ltotal = (raw_ltotal - item_disc).max(0);
 
                             let explicit_item_refund = it.get("refund_paisa").and_then(|p| p.as_i64());
                             let refund_line_paisa = if is_it_ret && ret_units > 0 {
@@ -7092,7 +7134,7 @@ impl DatabaseManager {
                                 } else if actual_order_refund_paisa > 0 {
                                     actual_order_refund_paisa
                                 } else {
-                                    ret_val
+                                    ltotal
                                 }
                             } else {
                                 0
@@ -7121,22 +7163,22 @@ impl DatabaseManager {
                                     comp_regular_total = raw_ltotal.max(1);
                                 }
 
-                                for c in components {
+                                let comp_max_idx = components.iter().enumerate().max_by_key(|(_, c)| {
+                                    let cq = c.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+                                    let cp = c.get("unit_regular_price").and_then(|p| p.as_i64()).unwrap_or(0) * 100;
+                                    cp * cq
+                                }).map(|(i, _)| i);
+                                let comp_discount = (comp_regular_total - ltotal).max(0);
+
+                                for (c_idx, c) in components.iter().enumerate() {
                                     let ctype = c.get("item_type").and_then(|v| v.as_str()).unwrap_or("PERFUME");
                                     let cname = c.get("name").and_then(|v| v.as_str()).unwrap_or("Fragrance Component");
                                     let cq = c.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1) * qty;
                                     let cp = c.get("unit_regular_price").and_then(|p| p.as_i64()).unwrap_or(0) * 100;
                                     let c_reg_line = cp * cq;
-                                    let c_raw = if comp_regular_total > 0 {
-                                        (raw_ltotal as f64 * (c_reg_line as f64 / comp_regular_total as f64)).round() as i64
-                                    } else {
-                                        raw_ltotal / components.len().max(1) as i64
-                                    };
-                                    let c_ltotal = if comp_regular_total > 0 {
-                                        (ltotal as f64 * (c_reg_line as f64 / comp_regular_total as f64)).round() as i64
-                                    } else {
-                                        ltotal / components.len().max(1) as i64
-                                    };
+                                    let c_raw = c_reg_line;
+                                    let c_disc = if Some(c_idx) == comp_max_idx { comp_discount } else { 0 };
+                                    let c_ltotal = (c_raw - c_disc).max(0);
 
                                     let is_c_tester = ctype == "TESTER" || cname.to_lowercase().contains("tester") || cname.to_lowercase().contains("sample");
                                     let is_c_attar = ctype == "ATTAR" && !is_c_tester;
@@ -9659,11 +9701,13 @@ impl DatabaseManager {
                 let net_collected = (curr_adv - total_ref).max(0);
                 let new_cod = (new_tot - net_collected).max(0);
                 let new_pay_status = if new_cod == 0 { "PAID" } else { "PARTIAL" };
+                let new_disc = payload.new_discount_paisa.unwrap_or(0);
 
                 tx.execute("
                     UPDATE online_orders
                     SET items_json = ?,
                         subtotal_paisa = ?,
+                        discount_paisa = ?,
                         total_amount_paisa = ?,
                         cod_balance_paisa = ?,
                         payment_status = ?,
@@ -9677,6 +9721,7 @@ impl DatabaseManager {
                 ", rusqlite::params![
                     rem_json,
                     new_sub,
+                    new_disc,
                     new_tot,
                     new_cod,
                     new_pay_status,
@@ -9843,6 +9888,8 @@ pub struct MarkOnlineReturnPayload {
     pub new_total_paisa: Option<i64>,
     #[serde(default)]
     pub new_subtotal_paisa: Option<i64>,
+    #[serde(default)]
+    pub new_discount_paisa: Option<i64>,
     #[serde(default)]
     pub is_partial: Option<bool>,
 }

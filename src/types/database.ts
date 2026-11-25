@@ -438,6 +438,7 @@ export interface ReturnableItem {
   unit_price_paisa: number;
   unit_cost_paisa: number;
   line_total_paisa: number;
+  original_unit_price_paisa?: number;
 }
 
 export interface InvoiceForReturn {

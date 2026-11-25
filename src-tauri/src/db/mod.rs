@@ -2376,6 +2376,8 @@ pub struct ReturnableItemDto {
     pub unit_price_paisa: i64,
     pub unit_cost_paisa: i64,
     pub line_total_paisa: i64,
+    #[serde(default)]
+    pub original_unit_price_paisa: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -2466,7 +2468,7 @@ impl DatabaseManager {
         let clean_q = query.trim();
 
         let mut inv_stmt = conn.prepare("
-            SELECT invoice_id, invoice_number, invoice_date, customer_phone, terminal_id, net_payable_paisa, is_voided
+            SELECT invoice_id, invoice_number, invoice_date, customer_phone, terminal_id, net_payable_paisa, is_voided, gross_total_paisa
             FROM sales_invoices
             WHERE invoice_number = ? OR customer_phone = ?
             ORDER BY invoice_date DESC
@@ -2482,11 +2484,12 @@ impl DatabaseManager {
                 row.get::<_, String>(4)?,
                 row.get::<_, i64>(5)?,
                 row.get::<_, i32>(6)? == 1,
+                row.get::<_, i64>(7).unwrap_or(0),
             ))
         });
 
         match inv_res {
-            Ok((inv_id, inv_num, inv_date, cust_phone, term_id, net_pay, is_voided)) => {
+            Ok((inv_id, inv_num, inv_date, cust_phone, term_id, net_pay, is_voided, gross_total)) => {
                 let mut items_stmt = conn.prepare("
                     SELECT invoice_item_id, COALESCE(finished_product_id, attar_id, ''), product_name, 
                            quantity, returned_quantity, unit_selling_price_paisa, unit_cost_paisa, line_total_paisa
@@ -2494,31 +2497,75 @@ impl DatabaseManager {
                     WHERE invoice_id = ?;
                 ").map_err(|e| e.to_string())?;
 
+                struct RawItemRow {
+                    invoice_item_id: String,
+                    product_id: String,
+                    product_name: String,
+                    quantity: i32,
+                    returned_quantity: i32,
+                    unit_selling: i64,
+                    unit_cost: i64,
+                    line_total: i64,
+                }
+
+                let mut raw_items = Vec::new();
                 let item_rows = items_stmt.query_map([&inv_id], |r| {
-                    let qty: i32 = r.get(3)?;
-                    let ret_qty: i32 = r.get(4)?;
-                    let unit_selling: i64 = r.get(5)?;
-                    let line_total: i64 = r.get(7)?;
-                    let effective_unit_price = if qty > 0 { line_total / qty as i64 } else { unit_selling };
-                    Ok(ReturnableItemDto {
+                    Ok(RawItemRow {
                         invoice_item_id: r.get(0)?,
                         product_id: r.get::<_, Option<String>>(1)?.unwrap_or_default(),
                         product_name: r.get(2)?,
-                        size_ml: 50,
-                        quantity_purchased: qty,
-                        quantity_already_returned: ret_qty,
-                        quantity_available_to_return: qty - ret_qty,
-                        unit_price_paisa: effective_unit_price,
-                        unit_cost_paisa: r.get(6)?,
-                        line_total_paisa: line_total,
+                        quantity: r.get(3)?,
+                        returned_quantity: r.get(4)?,
+                        unit_selling: r.get(5)?,
+                        unit_cost: r.get(6)?,
+                        line_total: r.get(7)?,
                     })
                 }).map_err(|e| e.to_string())?;
 
+                for ir in item_rows.flatten() {
+                    raw_items.push(ir);
+                }
+
+                let total_lines_paisa: i64 = raw_items.iter().map(|it| it.line_total).sum();
+                let denominator = if total_lines_paisa > 0 { total_lines_paisa } else { gross_total.max(1) };
+
                 let mut items = Vec::new();
-                for ir in item_rows {
-                    if let Ok(it) = ir {
-                        items.push(it);
-                    }
+                for it in raw_items {
+                    let qty = it.quantity;
+                    let ret_qty = it.returned_quantity;
+                    let unit_selling = it.unit_selling;
+                    let line_total = it.line_total;
+
+                    let net_line_paid = if denominator > 0 && net_pay < denominator {
+                        ((line_total as f64 / denominator as f64) * net_pay as f64).round() as i64
+                    } else {
+                        line_total
+                    };
+
+                    let effective_unit_price = if qty > 0 { net_line_paid / qty as i64 } else { unit_selling };
+                    let orig_catalog_unit_price = if qty > 0 && line_total > 0 {
+                        (line_total / qty as i64).max(unit_selling)
+                    } else {
+                        unit_selling
+                    };
+
+                    items.push(ReturnableItemDto {
+                        invoice_item_id: it.invoice_item_id,
+                        product_id: it.product_id,
+                        product_name: it.product_name,
+                        size_ml: 50,
+                        quantity_purchased: qty,
+                        quantity_already_returned: ret_qty,
+                        quantity_available_to_return: (qty - ret_qty).max(0),
+                        unit_price_paisa: effective_unit_price,
+                        unit_cost_paisa: it.unit_cost,
+                        line_total_paisa: net_line_paid,
+                        original_unit_price_paisa: if orig_catalog_unit_price > effective_unit_price {
+                            Some(orig_catalog_unit_price)
+                        } else {
+                            None
+                        },
+                    });
                 }
 
                 Ok(Some(InvoiceForReturnDto {
@@ -2547,15 +2594,22 @@ impl DatabaseManager {
         let return_id = format!("ret_{}_{}", chrono::Utc::now().timestamp_millis(), ret_count + 1);
 
         // Fetch invoice metadata
-        let (cust_phone, is_voided): (String, i32) = tx.query_row(
-            "SELECT customer_phone, is_voided FROM sales_invoices WHERE invoice_id = ?;",
+        let (cust_phone, is_voided, net_payable_paisa, gross_total_paisa): (String, i32, i64, i64) = tx.query_row(
+            "SELECT customer_phone, is_voided, net_payable_paisa, gross_total_paisa FROM sales_invoices WHERE invoice_id = ?;",
             [&payload.original_sales_invoice_id],
-            |r| Ok((r.get(0)?, r.get(1)?))
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
         ).map_err(|e| format!("Original invoice not found: {}", e))?;
 
         if is_voided == 1 {
             return Err("Cannot process return against a voided invoice!".to_string());
         }
+
+        let total_inv_lines: i64 = tx.query_row(
+            "SELECT COALESCE(SUM(line_total_paisa), 0) FROM sales_invoice_items WHERE invoice_id = ?;",
+            [&payload.original_sales_invoice_id],
+            |r| r.get(0)
+        ).unwrap_or(gross_total_paisa);
+        let denominator = if total_inv_lines > 0 { total_inv_lines } else { gross_total_paisa.max(1) };
 
         let mut total_refund_paisa = 0i64;
         let overall_condition = if payload.items.iter().any(|i| i.condition_status == "DAMAGED_RUINED") {
@@ -2599,7 +2653,13 @@ impl DatabaseManager {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?))
             ).map_err(|e| format!("Line item not found: {}", e))?;
 
-            let effective_unit_price = if orig_qty > 0 { line_total / orig_qty as i64 } else { unit_price };
+            let net_line_paid = if denominator > 0 && net_payable_paisa < denominator {
+                ((line_total as f64 / denominator as f64) * net_payable_paisa as f64).round() as i64
+            } else {
+                line_total
+            };
+
+            let effective_unit_price = if orig_qty > 0 { net_line_paid / orig_qty as i64 } else { unit_price };
             let standard_line_total = effective_unit_price * item_req.quantity_returned as i64;
             let deduction = item_req.deduction_amount_paisa.unwrap_or(0);
             let refund_line_total = if let Some(custom) = item_req.custom_refund_paisa {
@@ -2676,7 +2736,7 @@ impl DatabaseManager {
                     final_fp_id,
                     final_attar_id,
                     item_req.quantity_returned,
-                    unit_price,
+                    effective_unit_price,
                     unit_cost,
                     refund_line_total,
                     tagged_notes,
@@ -2741,6 +2801,18 @@ impl DatabaseManager {
                     ]
                 ).map_err(|e| format!("Failed to insert quarantine item: {}", e))?;
             }
+        }
+
+        // Guarantee total refund across all returns never exceeds net cash paid on original invoice
+        let previous_refunded: i64 = tx.query_row(
+            "SELECT COALESCE(SUM(total_refund_amount_paisa), 0) FROM return_vouchers WHERE original_sales_invoice_id = ?;",
+            [&payload.original_sales_invoice_id],
+            |r| r.get(0)
+        ).unwrap_or(0);
+
+        let max_possible_refund = (net_payable_paisa - previous_refunded).max(0);
+        if total_refund_paisa > max_possible_refund {
+            total_refund_paisa = max_possible_refund;
         }
 
         // Update return voucher total

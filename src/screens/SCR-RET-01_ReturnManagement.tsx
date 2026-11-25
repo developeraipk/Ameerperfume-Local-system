@@ -220,7 +220,9 @@ export const ReturnManagement: React.FC<ReturnManagementProps> = ({ currentUser,
     invoice.items.forEach((item) => {
       const sel = selectedItems[item.invoice_item_id];
       if (sel && sel.selected && sel.returnQty > 0) {
+        const grossLinePaisa = sel.returnQty * item.unit_price_paisa;
         const dedPaisa = sel.condition === "DAMAGED_RUINED" ? Math.round((sel.deductionRupees || 0) * 100) : 0;
+        const netLinePaisa = Math.max(0, grossLinePaisa - dedPaisa);
         itemsToReturn.push({
           original_retail_item_id: item.invoice_item_id,
           product_id: item.product_id,
@@ -228,6 +230,7 @@ export const ReturnManagement: React.FC<ReturnManagementProps> = ({ currentUser,
           condition_status: sel.condition,
           condition_notes: sel.notes || (dedPaisa > 0 ? `Damage deduction: Rs ${sel.deductionRupees}` : undefined),
           deduction_amount_paisa: dedPaisa > 0 ? dedPaisa : undefined,
+          custom_refund_paisa: netLinePaisa,
         });
       }
     });
@@ -577,7 +580,14 @@ export const ReturnManagement: React.FC<ReturnManagementProps> = ({ currentUser,
                               </select>
                             </td>
                             <td className="py-3 px-3 text-right font-mono text-slate-700 dark:text-slate-300">
-                              {formatPaisaToRupees(item.unit_price_paisa)}
+                              <span className="font-bold text-slate-900 dark:text-slate-100">
+                                {formatPaisaToRupees(item.unit_price_paisa)}
+                              </span>
+                              {item.original_unit_price_paisa && item.original_unit_price_paisa > item.unit_price_paisa ? (
+                                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-sans block line-through opacity-75">
+                                  {formatPaisaToRupees(item.original_unit_price_paisa)}
+                                </span>
+                              ) : null}
                             </td>
                             <td className="py-3 px-3 text-right">
                               {sel.condition === "DAMAGED_RUINED" && sel.selected ? (

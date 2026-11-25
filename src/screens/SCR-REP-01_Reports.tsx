@@ -293,9 +293,31 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
   const totalWholesaleDiscountedCount = 0;
   const totalWholesaleUnits = filteredWholesaleInvoices.length;
 
+  // Robust Gross calculation: Pure unadjusted items volume before any returns or deductions
+  const calcOnlineOrderGrossPaisa = (o: any): number => {
+    if (o.items_json) {
+      try {
+        const items = typeof o.items_json === "string" ? JSON.parse(o.items_json) : o.items_json;
+        if (Array.isArray(items) && items.length > 0) {
+          const itemsGross = items.reduce((sum: number, it: any) => {
+            const qty = Number(it.quantity) || 1;
+            const unitPrice = Number(it.unit_price_paisa) || (Number(it.line_total_paisa) ? Math.round(Number(it.line_total_paisa) / qty) : 0);
+            return sum + qty * unitPrice;
+          }, 0);
+          if (itemsGross > 0) {
+            return itemsGross + (o.delivery_charges_paisa || 0);
+          }
+        }
+      } catch {
+        // fallback
+      }
+    }
+    return (o.total_amount_paisa || 0) + (o.discount_paisa || 0) + (o.refund_amount_paisa || 0) + (o.deduction_amount_paisa || 0);
+  };
+
   // Online Orders Metrics:
   const totalOnlineGrossPaisa = filteredOnlineOrders.reduce(
-    (acc, o) => acc + (o.total_amount_paisa + (o.discount_paisa || 0)),
+    (acc, o) => acc + calcOnlineOrderGrossPaisa(o),
     0
   );
   const totalOnlineBilledPaisa = filteredOnlineOrders.reduce((acc, o) => acc + o.total_amount_paisa, 0);

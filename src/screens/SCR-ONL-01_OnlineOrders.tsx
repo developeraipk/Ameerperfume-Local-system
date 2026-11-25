@@ -2160,15 +2160,70 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  const pricePaisa = Math.round(off.bundle_price * 100);
-                                  const newItem: OnlineOrderItem = {
-                                    name: `🎁 Offer: ${off.title}`,
-                                    item_type: "OFFER",
-                                    quantity: 1,
-                                    unit_price_paisa: pricePaisa,
-                                    line_total_paisa: pricePaisa,
-                                  };
-                                  setOrderItems([...orderItems, newItem]);
+                                  const regularTotalPaisa = Math.round(off.regular_total * 100);
+                                  const bundlePricePaisa = Math.round(off.bundle_price * 100);
+                                  const totalSavingsPaisa = Math.max(0, regularTotalPaisa - bundlePricePaisa);
+
+                                  if (off.items && off.items.length > 0) {
+                                    // Distribute savings to highest regular price item so prices remain clean integers
+                                    const preparedItems = off.items.map((it, idx) => {
+                                      const q = Math.max(1, it.quantity || 1);
+                                      const regUnitPricePaisa = Math.round(it.unit_regular_price * 100);
+                                      const regLineTotalPaisa = regUnitPricePaisa * q;
+                                      return { idx, item: it, q, regUnitPricePaisa, regLineTotalPaisa };
+                                    });
+
+                                    const sorted = [...preparedItems].sort((a, b) => b.regLineTotalPaisa - a.regLineTotalPaisa);
+                                    let remainingDisc = totalSavingsPaisa;
+                                    const discMap = new Map<number, number>();
+
+                                    for (const p of sorted) {
+                                      if (remainingDisc <= 0) {
+                                        discMap.set(p.idx, 0);
+                                      } else {
+                                        const itemDisc = Math.min(remainingDisc, p.regLineTotalPaisa);
+                                        discMap.set(p.idx, itemDisc);
+                                        remainingDisc -= itemDisc;
+                                      }
+                                    }
+
+                                    const unpackedItems: OnlineOrderItem[] = preparedItems.map((p) => {
+                                      const itemDisc = discMap.get(p.idx) || 0;
+                                      const effLineTotalPaisa = Math.max(0, p.regLineTotalPaisa - itemDisc);
+                                      const effUnitPricePaisa = Math.round(effLineTotalPaisa / p.q);
+
+                                      const isTester = p.item.item_type === "TESTER" || 
+                                        p.item.name.toLowerCase().includes("tester") || 
+                                        p.item.name.toLowerCase().includes("sample");
+
+                                      const sizeMlMatch = p.item.size_label ? p.item.size_label.match(/(\d+)\s*ml/i) : null;
+                                      const parsedMl = sizeMlMatch ? parseInt(sizeMlMatch[1], 10) : undefined;
+
+                                      return {
+                                        name: `${p.item.name} (${off.title})`,
+                                        item_type: p.item.item_type,
+                                        product_id: p.item.product_id,
+                                        attar_id: p.item.attar_id,
+                                        quantity: p.q,
+                                        size_ml: parsedMl,
+                                        unit_price_paisa: effUnitPricePaisa,
+                                        line_total_paisa: effLineTotalPaisa,
+                                        is_tester: isTester,
+                                      };
+                                    });
+
+                                    setOrderItems([...orderItems, ...unpackedItems]);
+                                  } else {
+                                    const pricePaisa = Math.round(off.bundle_price * 100);
+                                    const newItem: OnlineOrderItem = {
+                                      name: `🎁 Offer: ${off.title}`,
+                                      item_type: "OFFER",
+                                      quantity: 1,
+                                      unit_price_paisa: pricePaisa,
+                                      line_total_paisa: pricePaisa,
+                                    };
+                                    setOrderItems([...orderItems, newItem]);
+                                  }
                                 }}
                                 className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-[10px] cursor-pointer"
                               >

@@ -6845,7 +6845,12 @@ impl DatabaseManager {
         let (online_gross, online_discount, online_net_raw, online_orders_cnt, online_discount_orders): (i64, i64, i64, i64, i64) = conn.query_row(
             &format!(
                 "SELECT 
-                    COALESCE(SUM(subtotal_paisa + delivery_charges_paisa + COALESCE(refund_amount_paisa, 0) + COALESCE(deduction_amount_paisa, 0)), 0),
+                    COALESCE(SUM(
+                        CASE 
+                            WHEN delivery_status = 'RETURNED_RTO' OR payment_status = 'RETURNED' THEN subtotal_paisa + delivery_charges_paisa
+                            ELSE subtotal_paisa + delivery_charges_paisa + COALESCE(refund_amount_paisa, 0) + COALESCE(deduction_amount_paisa, 0)
+                        END
+                    ), 0),
                     COALESCE(SUM(discount_paisa), 0),
                     COALESCE(SUM(total_amount_paisa), 0),
                     COUNT(*),
@@ -6961,6 +6966,21 @@ impl DatabaseManager {
         let mut online_attar_units = 0i64;
         let mut online_tester_units = 0i64;
 
+        let mut online_perfume_gross = 0i64;
+        let mut online_attar_gross = 0i64;
+        let mut online_tester_gross = 0i64;
+
+        let mut promotional_offers_spec: std::collections::HashMap<String, Vec<serde_json::Value>> = std::collections::HashMap::new();
+        if let Ok(mut off_stmt) = conn.prepare("SELECT title, items_json FROM promotional_offers;") {
+            if let Ok(rows) = off_stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+                for (title, ij) in rows.flatten() {
+                    if let Ok(parsed_sub) = serde_json::from_str::<Vec<serde_json::Value>>(&ij) {
+                        promotional_offers_spec.insert(title.to_lowercase().trim().to_string(), parsed_sub);
+                    }
+                }
+            }
+        }
+
         let mut online_perfume_ret_refunds = 0i64;
         let mut online_attar_ret_refunds = 0i64;
         let mut online_tester_ret_refunds = 0i64;
@@ -7070,47 +7090,109 @@ impl DatabaseManager {
                                 0
                             };
 
-                            let is_tester = itype == "TESTER" || pname.to_lowercase().contains("tester") || pname.to_lowercase().contains("sample");
-                            let is_attar = itype == "ATTAR" && !is_tester;
+                            let matched_offer_components = if itype == "OFFER" || pname.to_lowercase().contains("offer:") {
+                                promotional_offers_spec.iter().find_map(|(title, components)| {
+                                    if pname.to_lowercase().contains(title) {
+                                        Some(components)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            } else {
+                                None
+                            };
 
-                            if is_tester {
-                                online_tester_sales += ltotal;
-                                online_tester_units += qty;
-                                if is_it_ret && ret_units > 0 {
-                                    online_tester_ret_refunds += refund_line_paisa;
-                                    online_tester_ret_units += ret_units;
-                                    online_returned_items.push(OnlineReturnedItemInfo {
-                                        product_name: pname.to_string(),
-                                        item_type: "TESTER".to_string(),
-                                        quantity: ret_units,
-                                        line_total_paisa: refund_line_paisa,
-                                    });
+                            if let Some(components) = matched_offer_components {
+                                let mut comp_regular_total = 0i64;
+                                for c in components {
+                                    let cq = c.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+                                    let cp = c.get("unit_regular_price").and_then(|p| p.as_i64()).unwrap_or(0) * 100;
+                                    comp_regular_total += cp * cq;
                                 }
-                            } else if is_attar {
-                                online_attar_sales += ltotal;
-                                online_attar_units += qty;
-                                if is_it_ret && ret_units > 0 {
-                                    online_attar_ret_refunds += refund_line_paisa;
-                                    online_attar_ret_units += ret_units;
-                                    online_returned_items.push(OnlineReturnedItemInfo {
-                                        product_name: pname.to_string(),
-                                        item_type: "ATTAR".to_string(),
-                                        quantity: ret_units,
-                                        line_total_paisa: refund_line_paisa,
-                                    });
+                                if comp_regular_total <= 0 {
+                                    comp_regular_total = raw_ltotal.max(1);
+                                }
+
+                                for c in components {
+                                    let ctype = c.get("item_type").and_then(|v| v.as_str()).unwrap_or("PERFUME");
+                                    let cname = c.get("name").and_then(|v| v.as_str()).unwrap_or("Fragrance Component");
+                                    let cq = c.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1) * qty;
+                                    let cp = c.get("unit_regular_price").and_then(|p| p.as_i64()).unwrap_or(0) * 100;
+                                    let c_reg_line = cp * cq;
+                                    let c_raw = if comp_regular_total > 0 {
+                                        (raw_ltotal as f64 * (c_reg_line as f64 / comp_regular_total as f64)).round() as i64
+                                    } else {
+                                        raw_ltotal / components.len().max(1) as i64
+                                    };
+                                    let c_ltotal = if comp_regular_total > 0 {
+                                        (ltotal as f64 * (c_reg_line as f64 / comp_regular_total as f64)).round() as i64
+                                    } else {
+                                        ltotal / components.len().max(1) as i64
+                                    };
+
+                                    let is_c_tester = ctype == "TESTER" || cname.to_lowercase().contains("tester") || cname.to_lowercase().contains("sample");
+                                    let is_c_attar = ctype == "ATTAR" && !is_c_tester;
+
+                                    if is_c_tester {
+                                        online_tester_gross += c_raw;
+                                        online_tester_sales += c_ltotal;
+                                        online_tester_units += cq;
+                                    } else if is_c_attar {
+                                        online_attar_gross += c_raw;
+                                        online_attar_sales += c_ltotal;
+                                        online_attar_units += cq;
+                                    } else {
+                                        online_perfume_gross += c_raw;
+                                        online_perfume_sales += c_ltotal;
+                                        online_perfume_units += cq;
+                                    }
                                 }
                             } else {
-                                online_perfume_sales += ltotal;
-                                online_perfume_units += qty;
-                                if is_it_ret && ret_units > 0 {
-                                    online_perfume_ret_refunds += refund_line_paisa;
-                                    online_perfume_ret_units += ret_units;
-                                    online_returned_items.push(OnlineReturnedItemInfo {
-                                        product_name: pname.to_string(),
-                                        item_type: "PERFUME".to_string(),
-                                        quantity: ret_units,
-                                        line_total_paisa: refund_line_paisa,
-                                    });
+                                let is_tester = itype == "TESTER" || pname.to_lowercase().contains("tester") || pname.to_lowercase().contains("sample");
+                                let is_attar = itype == "ATTAR" && !is_tester;
+
+                                if is_tester {
+                                    online_tester_gross += raw_ltotal;
+                                    online_tester_sales += ltotal;
+                                    online_tester_units += qty;
+                                    if is_it_ret && ret_units > 0 {
+                                        online_tester_ret_refunds += refund_line_paisa;
+                                        online_tester_ret_units += ret_units;
+                                        online_returned_items.push(OnlineReturnedItemInfo {
+                                            product_name: pname.to_string(),
+                                            item_type: "TESTER".to_string(),
+                                            quantity: ret_units,
+                                            line_total_paisa: refund_line_paisa,
+                                        });
+                                    }
+                                } else if is_attar {
+                                    online_attar_gross += raw_ltotal;
+                                    online_attar_sales += ltotal;
+                                    online_attar_units += qty;
+                                    if is_it_ret && ret_units > 0 {
+                                        online_attar_ret_refunds += refund_line_paisa;
+                                        online_attar_ret_units += ret_units;
+                                        online_returned_items.push(OnlineReturnedItemInfo {
+                                            product_name: pname.to_string(),
+                                            item_type: "ATTAR".to_string(),
+                                            quantity: ret_units,
+                                            line_total_paisa: refund_line_paisa,
+                                        });
+                                    }
+                                } else {
+                                    online_perfume_gross += raw_ltotal;
+                                    online_perfume_sales += ltotal;
+                                    online_perfume_units += qty;
+                                    if is_it_ret && ret_units > 0 {
+                                        online_perfume_ret_refunds += refund_line_paisa;
+                                        online_perfume_ret_units += ret_units;
+                                        online_returned_items.push(OnlineReturnedItemInfo {
+                                            product_name: pname.to_string(),
+                                            item_type: "PERFUME".to_string(),
+                                            quantity: ret_units,
+                                            line_total_paisa: refund_line_paisa,
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -7184,9 +7266,9 @@ impl DatabaseManager {
             |r| Ok((r.get(0)?, r.get(1)?))
         ).unwrap_or((0, 0));
 
-        let final_perfume_gross_paisa = ret_perfume_gross + ws_perfume_gross + online_perfume_sales;
-        let final_attar_gross_paisa = ret_attar_gross + ws_attar_gross + online_attar_sales;
-        let final_tester_gross_paisa = ret_tester_gross + online_tester_sales;
+        let final_perfume_gross_paisa = ret_perfume_gross + ws_perfume_gross + online_perfume_gross;
+        let final_attar_gross_paisa = ret_attar_gross + ws_attar_gross + online_attar_gross;
+        let final_tester_gross_paisa = ret_tester_gross + online_tester_gross;
 
         // Invariant: Total gross must always match or exceed the sum of categories, and no category gross should exceed total gross
         let category_sum_gross = final_perfume_gross_paisa + final_attar_gross_paisa + final_tester_gross_paisa;
@@ -7890,7 +7972,16 @@ impl DatabaseManager {
                     let mut order_units = 0i64;
                     if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(&items_json) {
                         for it in parsed {
+                            let itype = it.get("item_type").and_then(|v| v.as_str()).unwrap_or("");
+                            let pname = it.get("name").and_then(|v| v.as_str()).unwrap_or("");
                             let qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+                            if itype == "OFFER" || pname.to_lowercase().contains("offer:") {
+                                if let Some(components) = promotional_offers_spec.iter().find_map(|(title, c)| if pname.to_lowercase().contains(title) { Some(c) } else { None }) {
+                                    let comp_units: i64 = components.iter().map(|c| c.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1)).sum();
+                                    order_units += comp_units * qty;
+                                    continue;
+                                }
+                            }
                             order_units += qty;
                         }
                     }

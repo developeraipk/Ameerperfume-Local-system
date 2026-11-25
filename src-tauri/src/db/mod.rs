@@ -7887,7 +7887,7 @@ impl DatabaseManager {
             |r| r.get(0)
         ).unwrap_or(0);
 
-        // 10. Channel breakdown (Shop / WhatsApp / Website) - True order counts & item unit summation
+        // 10. Channel breakdown (Shop / WhatsApp / Website) - True order counts & item unit summation (Gross sales volume preserved without returns deducted)
         let mut ch_stmt = conn.prepare(&format!("
             SELECT 
                 CASE 
@@ -7898,7 +7898,7 @@ impl DatabaseManager {
                     ELSE 'SHOP'
                 END AS ch,
                 COUNT(DISTINCT si.invoice_id) AS cnt,
-                COALESCE(SUM(si.net_payable_paisa), 0) AS rev,
+                COALESCE(SUM(COALESCE(si.gross_total_paisa, si.net_payable_paisa + si.item_discount_paisa + si.special_discount_paisa)), 0) AS rev,
                 COALESCE(SUM(sii.units), 0) AS units
             FROM sales_invoices si
             LEFT JOIN (
@@ -7948,33 +7948,49 @@ impl DatabaseManager {
             }
         }
 
-        // Aggregate online orders parsing true item units from items_json (Gross orders, revenue, and units preserved - returns do not cut from channel telemetry)
+        // Aggregate online orders parsing true item units and gross revenue from items_json (Gross orders, revenue, and units preserved - returns do not cut from channel telemetry)
         if let Ok(mut onl_stmt) = conn.prepare(&format!("
             SELECT 
                 CASE 
                     WHEN UPPER(channel) LIKE '%WHATSAPP%' THEN 'WHATSAPP'
                     ELSE 'WEBSITE'
                 END AS ch,
+                subtotal_paisa,
+                delivery_charges_paisa,
+                COALESCE(refund_amount_paisa, 0),
+                COALESCE(deduction_amount_paisa, 0),
+                COALESCE(discount_paisa, 0),
                 total_amount_paisa,
                 items_json
             FROM online_orders
-            WHERE {};
+            WHERE delivery_status != 'CANCELLED' AND {};
         ", onl_cond)) {
             if let Ok(rows) = onl_stmt.query_map([], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(1).unwrap_or(0),
+                    r.get::<_, i64>(2).unwrap_or(0),
+                    r.get::<_, i64>(3).unwrap_or(0),
+                    r.get::<_, i64>(4).unwrap_or(0),
+                    r.get::<_, i64>(5).unwrap_or(0),
+                    r.get::<_, i64>(6).unwrap_or(0),
+                    r.get::<_, String>(7).unwrap_or_default(),
                 ))
             }) {
                 for r in rows.flatten() {
-                    let (ch, rev, items_json) = r;
+                    let (ch, subtotal, delivery, refund, deduct, discount, total_amt, items_json) = r;
                     let mut order_units = 0i64;
+                    let mut order_gross_paisa = 0i64;
                     if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(&items_json) {
                         for it in parsed {
                             let itype = it.get("item_type").and_then(|v| v.as_str()).unwrap_or("");
                             let pname = it.get("name").and_then(|v| v.as_str()).unwrap_or("");
                             let qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+                            let unit_price = it.get("unit_price_paisa").and_then(|u| u.as_i64())
+                                .or_else(|| it.get("line_total_paisa").and_then(|l| l.as_i64()).map(|l| if qty > 0 { l / qty } else { 0 }))
+                                .unwrap_or(0);
+                            order_gross_paisa += qty * unit_price;
+
                             if itype == "OFFER" || pname.to_lowercase().contains("offer:") {
                                 if let Some(components) = promotional_offers_spec.iter().find_map(|(title, c)| if pname.to_lowercase().contains(title) { Some(c) } else { None }) {
                                     let comp_units: i64 = components.iter().map(|c| c.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1)).sum();
@@ -7985,17 +8001,25 @@ impl DatabaseManager {
                             order_units += qty;
                         }
                     }
+                    if order_gross_paisa == 0 {
+                        order_gross_paisa = subtotal + delivery + refund + deduct + discount;
+                    } else {
+                        order_gross_paisa += delivery;
+                    }
+                    if order_gross_paisa == 0 {
+                        order_gross_paisa = total_amt;
+                    }
                     if order_units == 0 {
                         order_units = 1;
                     }
 
                     if ch == "WHATSAPP" {
                         wa_orders += 1;
-                        wa_rev += rev;
+                        wa_rev += order_gross_paisa;
                         wa_units += order_units;
                     } else {
                         web_orders += 1;
-                        web_rev += rev;
+                        web_rev += order_gross_paisa;
                         web_units += order_units;
                     }
                 }

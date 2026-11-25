@@ -325,7 +325,12 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
     if (o.payment_status === "RETURNED" || o.delivery_status === "RETURNED_RTO") {
       return acc + Math.max(0, o.deduction_amount_paisa || 0);
     }
-    return acc + Math.max(0, o.advance_paid_paisa - (o.refund_amount_paisa || 0));
+    if (o.payment_status === "PAID") {
+      return acc + (o.total_amount_paisa || 0);
+    }
+    const netAdvance = Math.max(0, (o.advance_paid_paisa || 0) - (o.refund_amount_paisa || 0));
+    const codReceived = Math.max(0, (o.total_amount_paisa || 0) - (o.cod_balance_paisa || 0) - netAdvance);
+    return acc + netAdvance + codReceived;
   }, 0);
   const totalOnlinePendingCodPaisa = filteredOnlineOrders.reduce((acc, o) => {
     if (o.payment_status === "RETURNED" || o.delivery_status === "RETURNED_RTO") return acc;
@@ -358,7 +363,8 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
     return acc + Math.max(0, o.total_amount_paisa - deduct);
   }, 0);
   const totalOnlineReturnsCount = returnedOnlineOrders.length;
-  const totalOnlineNetRevenuePaisa = Math.max(0, totalOnlineBilledPaisa - totalOnlineReturnsPaisa);
+  // Net sales revenue: Pure Gross minus Discounts minus Customer Returns (Prevents double deduction on partial returns)
+  const totalOnlineNetRevenuePaisa = Math.max(0, totalOnlineGrossPaisa - totalOnlineDiscountsPaisa - totalOnlineReturnsPaisa);
 
   // Combined Channel Returns:
   let displayReturnsPaisa = 0;

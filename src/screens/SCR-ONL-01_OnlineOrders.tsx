@@ -335,9 +335,12 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     if (o.payment_status === "RETURNED" || o.delivery_status === "RETURNED_RTO") {
       return o.deduction_amount_paisa || 0;
     }
-    const orderVal = o.total_amount_paisa || 0;
-    const refunded = o.refund_amount_paisa || 0;
-    return Math.max(0, orderVal - refunded);
+    if (o.payment_status === "PAID") {
+      return o.total_amount_paisa || 0;
+    }
+    const netAdvance = Math.max(0, (o.advance_paid_paisa || 0) - (o.refund_amount_paisa || 0));
+    const codReceived = Math.max(0, (o.total_amount_paisa || 0) - (o.cod_balance_paisa || 0) - netAdvance);
+    return netAdvance + codReceived;
   };
 
   const waCollectedPaisa = waOrders.reduce((sum, o) => sum + calcOrderRealizedPaisa(o), 0);

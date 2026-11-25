@@ -220,10 +220,32 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const waOrders = periodFilteredOrders.filter((o) => o.channel === "WHATSAPP");
   const webOrders = periodFilteredOrders.filter((o) => o.channel === "WEBSITE");
 
-  // Total Gross Order Value
-  const totalGrossOrderValuePaisa = periodFilteredOrders.reduce((sum, o) => sum + o.total_amount_paisa, 0);
-  const waGrossOrderValuePaisa = waOrders.reduce((sum, o) => sum + o.total_amount_paisa, 0);
-  const webGrossOrderValuePaisa = webOrders.reduce((sum, o) => sum + o.total_amount_paisa, 0);
+  // Gross Order Value before returns/refunds (True sales volume)
+  const calcOrderGrossPaisa = (o: OnlineOrder): number => {
+    if (o.items_json) {
+      try {
+        const items = typeof o.items_json === "string" ? JSON.parse(o.items_json) : o.items_json;
+        if (Array.isArray(items) && items.length > 0) {
+          const itemsGross = items.reduce((sum: number, it: any) => {
+            const qty = Number(it.quantity) || 1;
+            const unitPrice = Number(it.unit_price_paisa) || (Number(it.line_total_paisa) ? Math.round(Number(it.line_total_paisa) / qty) : 0);
+            return sum + qty * unitPrice;
+          }, 0);
+          if (itemsGross > 0) {
+            return itemsGross + (o.delivery_charges_paisa || 0);
+          }
+        }
+      } catch {
+        // fallback
+      }
+    }
+    return (o.total_amount_paisa || 0) + (o.refund_amount_paisa || 0) + (o.deduction_amount_paisa || 0);
+  };
+
+  // Total Gross Order Value (Intact gross sales volume)
+  const totalGrossOrderValuePaisa = periodFilteredOrders.reduce((sum, o) => sum + calcOrderGrossPaisa(o), 0);
+  const waGrossOrderValuePaisa = waOrders.reduce((sum, o) => sum + calcOrderGrossPaisa(o), 0);
+  const webGrossOrderValuePaisa = webOrders.reduce((sum, o) => sum + calcOrderGrossPaisa(o), 0);
 
   // Pending Receivables (COD)
   const waPendingPaisa = waOrders.reduce(
@@ -637,7 +659,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     if (netPaidSoFar > 0) {
       setRefundMode("FULL");
       setRefundDeductionRupees("0");
-      setRefundPaymentMethod(order.collection_method || order.refund_settlement_method || "CASH");
+      setRefundPaymentMethod(order.refund_settlement_method || "CASH");
     } else {
       setRefundMode("NONE");
       setRefundDeductionRupees("0");

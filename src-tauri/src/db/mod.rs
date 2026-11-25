@@ -6845,7 +6845,7 @@ impl DatabaseManager {
         let (online_gross, online_discount, online_net_raw, online_orders_cnt, online_discount_orders): (i64, i64, i64, i64, i64) = conn.query_row(
             &format!(
                 "SELECT 
-                    COALESCE(SUM(subtotal_paisa + delivery_charges_paisa), 0),
+                    COALESCE(SUM(subtotal_paisa + delivery_charges_paisa + COALESCE(refund_amount_paisa, 0) + COALESCE(deduction_amount_paisa, 0)), 0),
                     COALESCE(SUM(discount_paisa), 0),
                     COALESCE(SUM(total_amount_paisa), 0),
                     COUNT(*),
@@ -6858,14 +6858,14 @@ impl DatabaseManager {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         ).unwrap_or((0, 0, 0, 0, 0));
 
-        let period_gross = retail_gross + wholesale_gross + online_gross;
+        let mut period_gross = retail_gross + wholesale_gross + online_gross;
         let period_discount = retail_discount + wholesale_discount + online_discount;
         let period_net_raw = retail_net_raw + wholesale_net_raw + online_net_raw;
         let period_orders = retail_orders + wholesale_orders + online_orders_cnt;
         let period_discount_orders = retail_discount_orders + wholesale_discount_orders + online_discount_orders;
 
         // Net sales after customer return refunds (Gross remains intact; Net = Gross - Discounts - Returns)
-        let final_net_sales = (period_net_raw - period_refunds).max(0);
+        let mut final_net_sales = (period_net_raw - period_refunds).max(0);
 
         // 2. Perfume vs Attar sales, orders count & units count for selected period (Retail + Wholesale, Net of discounts and returns)
         let (net_retail_perfume, net_retail_attar, retail_perfume_orders, retail_attar_orders, retail_perfume_units, retail_attar_units): (i64, i64, i64, i64, i64, i64) = conn.query_row(
@@ -7185,6 +7185,11 @@ impl DatabaseManager {
         let final_attar_gross_paisa = ret_attar_gross + ws_attar_gross + online_attar_sales;
         let final_tester_gross_paisa = ret_tester_gross + online_tester_sales;
 
+        // Invariant: Total gross must always match or exceed the sum of categories, and no category gross should exceed total gross
+        let category_sum_gross = final_perfume_gross_paisa + final_attar_gross_paisa + final_tester_gross_paisa;
+        period_gross = category_sum_gross.max(period_gross);
+        final_net_sales = (period_gross - period_discount - period_refunds).max(0);
+
         // Category discount breakdown (Retail + Wholesale)
         let (ret_perfume_disc, ret_perfume_disc_u, ret_attar_disc, ret_attar_disc_u, ret_tester_disc, ret_tester_disc_u): (i64, i64, i64, i64, i64, i64) = conn.query_row(
             &format!(
@@ -7463,11 +7468,11 @@ impl DatabaseManager {
                 LEFT JOIN wholesale_invoices wi ON wp.wholesale_invoice_id = wi.wholesale_invoice_id
                 WHERE wp.payment_method = 'CASH' AND COALESCE(wi.is_voided, 0) = 0 AND {}
                 UNION ALL
-                SELECT MIN(oop.amount_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_order_payments oop
+                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE UPPER(oop.payment_method) = 'CASH' AND {}
                 UNION ALL
-                SELECT MIN(oo.advance_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_orders oo
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
                 WHERE oo.advance_paid_paisa > 0 
                   AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH' 
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
@@ -7494,11 +7499,11 @@ impl DatabaseManager {
                    OR wp.notes LIKE '%easypaisa%')
                    AND COALESCE(wi.is_voided, 0) = 0 AND {}
                 UNION ALL
-                SELECT MIN(oop.amount_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_order_payments oop
+                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%') AND {}
                 UNION ALL
-                SELECT MIN(oo.advance_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_orders oo
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
                 WHERE oo.advance_paid_paisa > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%') 
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
@@ -7525,11 +7530,11 @@ impl DatabaseManager {
                    OR wp.notes LIKE '%jazzcash%')
                    AND COALESCE(wi.is_voided, 0) = 0 AND {}
                 UNION ALL
-                SELECT MIN(oop.amount_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_order_payments oop
+                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%') AND {}
                 UNION ALL
-                SELECT MIN(oo.advance_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_orders oo
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
                 WHERE oo.advance_paid_paisa > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%') 
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
@@ -7647,11 +7652,11 @@ impl DatabaseManager {
                 LEFT JOIN wholesale_invoices wi ON wp.wholesale_invoice_id = wi.wholesale_invoice_id
                 WHERE wp.payment_method = 'CASH' AND COALESCE(wi.is_voided, 0) = 0
                 UNION ALL
-                SELECT MIN(oop.amount_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_order_payments oop
+                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE UPPER(oop.payment_method) = 'CASH'
                 UNION ALL
-                SELECT MIN(oo.advance_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_orders oo
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
                 WHERE oo.advance_paid_paisa > 0 
                   AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
@@ -7678,11 +7683,11 @@ impl DatabaseManager {
                    OR wp.notes LIKE '%easypaisa%')
                    AND COALESCE(wi.is_voided, 0) = 0
                 UNION ALL
-                SELECT MIN(oop.amount_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_order_payments oop
+                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%')
                 UNION ALL
-                SELECT MIN(oo.advance_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_orders oo
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
                 WHERE oo.advance_paid_paisa > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%')
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
@@ -7709,11 +7714,11 @@ impl DatabaseManager {
                    OR wp.notes LIKE '%jazzcash%')
                    AND COALESCE(wi.is_voided, 0) = 0
                 UNION ALL
-                SELECT MIN(oop.amount_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_order_payments oop
+                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%')
                 UNION ALL
-                SELECT MIN(oo.advance_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_orders oo
+                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
                 WHERE oo.advance_paid_paisa > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%')
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)

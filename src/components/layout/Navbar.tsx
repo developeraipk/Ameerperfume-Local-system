@@ -116,8 +116,26 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const renderFormattedName = (fullName: string) => {
     const cleanName = fullName.replace(/\s*\([^)]*\)/g, "").trim();
+    const words = cleanName.split(/\s+/).filter(Boolean);
+    if (words.length >= 3) {
+      const firstLine = words.slice(0, -1).join(" ");
+      const secondLine = words.slice(-1).join(" ");
+      return (
+        <div className="font-bold text-slate-900 dark:text-slate-100 text-xs leading-tight" title={cleanName}>
+          <div className="whitespace-nowrap">{firstLine}</div>
+          <div className="whitespace-nowrap text-slate-700 dark:text-slate-300 font-semibold">{secondLine}</div>
+        </div>
+      );
+    } else if (words.length === 2 && cleanName.length > 12) {
+      return (
+        <div className="font-bold text-slate-900 dark:text-slate-100 text-xs leading-tight" title={cleanName}>
+          <div className="whitespace-nowrap">{words[0]}</div>
+          <div className="whitespace-nowrap text-slate-700 dark:text-slate-300 font-semibold">{words[1]}</div>
+        </div>
+      );
+    }
     return (
-      <div className="font-bold text-slate-900 dark:text-slate-100 text-xs leading-tight truncate max-w-[130px] whitespace-nowrap" title={cleanName}>
+      <div className="font-bold text-slate-900 dark:text-slate-100 text-xs leading-tight" title={cleanName}>
         {cleanName}
       </div>
     );
@@ -714,12 +732,12 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               type="button"
               onClick={() => setOpenDropdown(openDropdown === "user" ? null : "user")}
-              className={`h-[46px] flex items-center gap-2 bg-slate-100/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800/80 px-2.5 sm:px-3 rounded-2xl shadow-xs shrink-0 cursor-pointer transition-colors ${
+              className={`min-h-[46px] h-auto py-1 flex items-center gap-2 bg-slate-100/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800/80 px-2.5 sm:px-3 rounded-2xl shadow-xs shrink-0 cursor-pointer transition-colors ${
                 openDropdown === "user" ? "border-amber-500 ring-2 ring-amber-500/20" : "hover:border-amber-400/60"
               }`}
               title="Click to view user profile, Lock [F10], Logout, or Reset DB"
             >
-              <div className="text-left shrink-0 max-w-[140px] block">
+              <div className="text-left shrink-0 max-w-[150px] block">
                 {renderFormattedName(currentUser.full_name)}
                 <div className="text-[9px] mt-0.5">
                   <Badge variant={getRoleBadgeVariant(currentUser.role)} className="py-0 px-1 text-[8.5px] font-semibold leading-tight">

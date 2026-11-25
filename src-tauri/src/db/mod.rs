@@ -6860,12 +6860,12 @@ impl DatabaseManager {
 
         let mut period_gross = retail_gross + wholesale_gross + online_gross;
         let period_discount = retail_discount + wholesale_discount + online_discount;
-        let period_net_raw = retail_net_raw + wholesale_net_raw + online_net_raw;
+        let _period_net_raw = retail_net_raw + wholesale_net_raw + online_net_raw;
         let period_orders = retail_orders + wholesale_orders + online_orders_cnt;
         let period_discount_orders = retail_discount_orders + wholesale_discount_orders + online_discount_orders;
 
         // Net sales after customer return refunds (Gross remains intact; Net = Gross - Discounts - Returns)
-        let mut final_net_sales = (period_net_raw - period_refunds).max(0);
+        let final_net_sales;
 
         // 2. Perfume vs Attar sales, orders count & units count for selected period (Retail + Wholesale, Net of discounts and returns)
         let (net_retail_perfume, net_retail_attar, retail_perfume_orders, retail_attar_orders, retail_perfume_units, retail_attar_units): (i64, i64, i64, i64, i64, i64) = conn.query_row(
@@ -7055,8 +7055,11 @@ impl DatabaseManager {
                                 raw_ltotal
                             };
 
+                            let explicit_item_refund = it.get("refund_paisa").and_then(|p| p.as_i64());
                             let refund_line_paisa = if is_it_ret && ret_units > 0 {
-                                if actual_order_refund_paisa > 0 && total_ret_val_paisa > 0 {
+                                if let Some(exp_ref) = explicit_item_refund {
+                                    exp_ref
+                                } else if actual_order_refund_paisa > 0 && total_ret_val_paisa > 0 {
                                     (actual_order_refund_paisa as f64 * (ret_val as f64 / total_ret_val_paisa as f64)).round() as i64
                                 } else if actual_order_refund_paisa > 0 {
                                     actual_order_refund_paisa
@@ -7585,19 +7588,19 @@ impl DatabaseManager {
         let jazzcash_refunds_paisa = retail_jc_refunds_paisa + onl_jc_refunds_paisa;
 
         // Deduct employee salary payouts per payout channel (EasyPaisa from EasyPaisa, JazzCash from JazzCash, Cash from Cash)
-        let cash_salaries_paisa: i64 = conn.query_row(
+        let _cash_salaries_paisa: i64 = conn.query_row(
             &format!("SELECT COALESCE(SUM(amount_paisa), 0) FROM employee_salary_payouts WHERE UPPER(payment_method) = 'CASH' AND {};", sal_cond),
             [],
             |r| r.get(0)
         ).unwrap_or(0);
 
-        let easypaisa_salaries_paisa: i64 = conn.query_row(
+        let _easypaisa_salaries_paisa: i64 = conn.query_row(
             &format!("SELECT COALESCE(SUM(amount_paisa), 0) FROM employee_salary_payouts WHERE (UPPER(payment_method) LIKE '%EASYPAISA%' OR UPPER(payment_method) LIKE '%EASY_PAISA%') AND {};", sal_cond),
             [],
             |r| r.get(0)
         ).unwrap_or(0);
 
-        let jazzcash_salaries_paisa: i64 = conn.query_row(
+        let _jazzcash_salaries_paisa: i64 = conn.query_row(
             &format!("SELECT COALESCE(SUM(amount_paisa), 0) FROM employee_salary_payouts WHERE (UPPER(payment_method) LIKE '%JAZZCASH%' OR UPPER(payment_method) LIKE '%JAZZ_CASH%') AND {};", sal_cond),
             [],
             |r| r.get(0)
@@ -7757,25 +7760,25 @@ impl DatabaseManager {
             |r| r.get(0)
         ).unwrap_or(0);
 
-        let all_time_cash_salaries: i64 = conn.query_row(
+        let _all_time_cash_salaries: i64 = conn.query_row(
             "SELECT COALESCE(SUM(amount_paisa), 0) FROM employee_salary_payouts WHERE UPPER(payment_method) = 'CASH';",
             [],
             |r| r.get(0)
         ).unwrap_or(0);
 
-        let all_time_ep_salaries: i64 = conn.query_row(
+        let _all_time_ep_salaries: i64 = conn.query_row(
             "SELECT COALESCE(SUM(amount_paisa), 0) FROM employee_salary_payouts WHERE (UPPER(payment_method) LIKE '%EASYPAISA%' OR UPPER(payment_method) LIKE '%EASY_PAISA%');",
             [],
             |r| r.get(0)
         ).unwrap_or(0);
 
-        let all_time_jc_salaries: i64 = conn.query_row(
+        let _all_time_jc_salaries: i64 = conn.query_row(
             "SELECT COALESCE(SUM(amount_paisa), 0) FROM employee_salary_payouts WHERE (UPPER(payment_method) LIKE '%JAZZCASH%' OR UPPER(payment_method) LIKE '%JAZZ_CASH%');",
             [],
             |r| r.get(0)
         ).unwrap_or(0);
 
-        let all_time_expenses: i64 = conn.query_row(
+        let _all_time_expenses: i64 = conn.query_row(
             "SELECT COALESCE(SUM(amount_paisa), 0) FROM petty_expenses;",
             [],
             |r| r.get(0)
@@ -9506,15 +9509,18 @@ impl DatabaseManager {
         let deduct_amt = payload.deduction_amount_paisa.unwrap_or(0);
         let refund_method = payload.refund_settlement_method.clone().unwrap_or_else(|| "CASH".to_string());
 
+        // Cumulative tracking: Fetch current refunds & deductions to add them up instead of overwriting
+        let (curr_adv, curr_ref, curr_ded): (i64, i64, i64) = tx.query_row(
+            "SELECT advance_paid_paisa, COALESCE(refund_amount_paisa, 0), COALESCE(deduction_amount_paisa, 0) FROM online_orders WHERE order_id = ?;",
+            [&payload.order_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).map_err(|e| format!("Order not found: {}", e))?;
+
+        let total_ref = curr_ref + refund_amt;
+        let total_ded = curr_ded + deduct_amt;
+
         if payload.is_partial == Some(true) {
             if let (Some(ref rem_json), Some(new_tot), Some(new_sub)) = (&payload.remaining_items_json, payload.new_total_paisa, payload.new_subtotal_paisa) {
-                let (curr_adv, curr_ref): (i64, i64) = tx.query_row(
-                    "SELECT advance_paid_paisa, COALESCE(refund_amount_paisa, 0) FROM online_orders WHERE order_id = ?;",
-                    [&payload.order_id],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                ).map_err(|e| format!("Order not found: {}", e))?;
-
-                let total_ref = curr_ref + refund_amt;
                 let net_collected = (curr_adv - total_ref).max(0);
                 let new_cod = (new_tot - net_collected).max(0);
                 let new_pay_status = if new_cod == 0 { "PAID" } else { "PARTIAL" };
@@ -9541,7 +9547,7 @@ impl DatabaseManager {
                     new_pay_status,
                     payload.return_reason,
                     total_ref,
-                    deduct_amt,
+                    total_ded,
                     refund_method,
                     payload.order_id,
                 ]).map_err(|e| format!("Failed to record partial return: {}", e))?;
@@ -9582,8 +9588,8 @@ impl DatabaseManager {
             ", rusqlite::params![
                 items_json_to_store,
                 payload.return_reason,
-                refund_amt,
-                deduct_amt,
+                total_ref,
+                total_ded,
                 refund_method,
                 payload.order_id,
             ]).map_err(|e| format!("Failed to mark return: {}", e))?;

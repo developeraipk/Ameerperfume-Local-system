@@ -133,6 +133,8 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     returnQty: number;
     selected: boolean;
     unitPricePaisa: number;
+    origUnitPricePaisa?: number;
+    allocatedDiscountPaisa?: number;
     rawItem: any;
   }[]>([]);
 
@@ -220,6 +222,51 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const waOrders = periodFilteredOrders.filter((o) => o.channel === "WHATSAPP");
   const webOrders = periodFilteredOrders.filter((o) => o.channel === "WEBSITE");
 
+  // Allocate order discount to the highest-priced items first so return refund calculation is simple and clean
+  const computeItemDiscountAllocation = (
+    items: any[],
+    totalDiscountPaisa: number
+  ): Map<number, { effectiveUnitPricePaisa: number; allocatedDiscountPaisa: number; origUnitPricePaisa: number }> => {
+    const result = new Map<number, { effectiveUnitPricePaisa: number; allocatedDiscountPaisa: number; origUnitPricePaisa: number }>();
+    if (!items || items.length === 0) return result;
+
+    const prepared = items.map((it, idx) => {
+      const qty = Math.max(1, Number(it.quantity) || 1);
+      const unitPrice = Number(it.unit_price_paisa) || (Number(it.line_total_paisa) ? Math.round(Number(it.line_total_paisa) / qty) : 0);
+      const lineTotal = unitPrice * qty;
+      return { idx, qty, unitPrice, lineTotal };
+    });
+
+    // Sort descending by lineTotal so highest priced products receive the discount first
+    const sorted = [...prepared].sort((a, b) => b.lineTotal - a.lineTotal);
+
+    let remainingDiscount = Math.max(0, totalDiscountPaisa);
+    const discountsByOriginalIdx = new Map<number, number>();
+
+    for (const item of sorted) {
+      if (remainingDiscount <= 0) {
+        discountsByOriginalIdx.set(item.idx, 0);
+      } else {
+        const discountForItem = Math.min(remainingDiscount, item.lineTotal);
+        discountsByOriginalIdx.set(item.idx, discountForItem);
+        remainingDiscount -= discountForItem;
+      }
+    }
+
+    for (const item of prepared) {
+      const disc = discountsByOriginalIdx.get(item.idx) || 0;
+      const effLineTotal = Math.max(0, item.lineTotal - disc);
+      const effUnitPrice = Math.round(effLineTotal / item.qty);
+      result.set(item.idx, {
+        effectiveUnitPricePaisa: effUnitPrice,
+        allocatedDiscountPaisa: disc,
+        origUnitPricePaisa: item.unitPrice,
+      });
+    }
+
+    return result;
+  };
+
   // Gross Order Value before returns/refunds (True sales volume)
   const calcOrderGrossPaisa = (o: OnlineOrder): number => {
     if (o.items_json) {
@@ -240,6 +287,31 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       }
     }
     return (o.total_amount_paisa || 0) + (o.refund_amount_paisa || 0) + (o.deduction_amount_paisa || 0);
+  };
+
+  // True Goods Value of Returned Items / Full Parcel
+  const calcOrderReturnedGoodsValuePaisa = (o: OnlineOrder): number => {
+    if (o.delivery_status === "RETURNED_RTO" || o.payment_status === "RETURNED") {
+      return calcOrderGrossPaisa(o);
+    }
+    if (o.items_json) {
+      try {
+        const items = typeof o.items_json === "string" ? JSON.parse(o.items_json) : o.items_json;
+        if (Array.isArray(items)) {
+          const sumRet = items.reduce((s: number, it: any) => {
+            const retQty = Number(it.returned_quantity) || 0;
+            const unitPrice = Number(it.unit_price_paisa) || (Number(it.line_total_paisa) ? Math.round(Number(it.line_total_paisa) / (Number(it.quantity) || 1)) : 0);
+            return s + retQty * unitPrice;
+          }, 0);
+          if (sumRet > 0) return sumRet;
+        }
+      } catch {
+        // fallback
+      }
+    }
+    const ref = o.refund_amount_paisa || 0;
+    const ded = o.deduction_amount_paisa || 0;
+    return ref + ded > 0 ? ref + ded : calcOrderGrossPaisa(o);
   };
 
   // Total Gross Order Value (Intact gross sales volume)
@@ -307,12 +379,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       (o.refund_amount_paisa || 0) > 0
   );
   const totalReturnedValuePaisa = returnedOrders.reduce((sum, o) => {
-    if (o.delivery_status === "RETURNED_RTO" || o.payment_status === "RETURNED") {
-      return sum + o.total_amount_paisa;
-    }
-    const ref = o.refund_amount_paisa || 0;
-    const ded = o.deduction_amount_paisa || 0;
-    return sum + (ref + ded > 0 ? ref + ded : o.total_amount_paisa);
+    return sum + calcOrderReturnedGoodsValuePaisa(o);
   }, 0);
   const totalRefundedPaisa = returnedOrders.reduce((sum, o) => sum + (o.refund_amount_paisa || 0), 0);
 
@@ -637,10 +704,19 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       parsed = [];
     }
 
+    // Allocate order discount to the highest-priced items first so return refund calculation is simple and clean
+    const discountAllocations = computeItemDiscountAllocation(parsed, order.discount_paisa || 0);
+
     const selections = parsed.map((it, idx) => {
       const alreadyReturned = it.returned_quantity || 0;
       const totalOrdered = it.quantity || 1;
       const availableQty = Math.max(0, totalOrdered - alreadyReturned);
+      const alloc = discountAllocations.get(idx) || {
+        effectiveUnitPricePaisa: it.unit_price_paisa || Math.round((it.line_total_paisa || 0) / totalOrdered),
+        allocatedDiscountPaisa: 0,
+        origUnitPricePaisa: it.unit_price_paisa || Math.round((it.line_total_paisa || 0) / totalOrdered),
+      };
+
       return {
         originalIndex: idx,
         name: it.name || it.product_name || "Fragrance Item",
@@ -649,7 +725,9 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
         maxQty: availableQty,
         returnQty: availableQty > 0 ? availableQty : 0,
         selected: availableQty > 0,
-        unitPricePaisa: it.unit_price_paisa || Math.round((it.line_total_paisa || 0) / (it.quantity || 1)),
+        unitPricePaisa: alloc.effectiveUnitPricePaisa,
+        origUnitPricePaisa: alloc.origUnitPricePaisa,
+        allocatedDiscountPaisa: alloc.allocatedDiscountPaisa,
         rawItem: it,
       };
     });
@@ -711,14 +789,20 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     try {
       setLoading(true);
 
-      // Create updated items array preserving ALL items and tracking returned quantities
+      // Create updated items array preserving ALL items, tracking returned quantities and exact refund per item
       const updatedAllItems = returnItemSelections.map((s) => {
         const newlyReturned = s.selected ? s.returnQty : 0;
         const totalReturned = (s.rawItem.returned_quantity || 0) + newlyReturned;
         const totalOrdered = s.rawItem.quantity || 1;
+        const itemShareOfRefund = (s.selected && returnedItemsValuePaisa > 0 && refundPaisa > 0)
+          ? Math.round(refundPaisa * ((s.returnQty * s.unitPricePaisa) / returnedItemsValuePaisa))
+          : 0;
+        const prevItemRefund = s.rawItem.refund_paisa || 0;
+
         return {
           ...s.rawItem,
           returned_quantity: totalReturned,
+          refund_paisa: prevItemRefund + itemShareOfRefund,
           return_status:
             totalReturned >= totalOrdered
               ? "RETURNED"
@@ -728,11 +812,18 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
         };
       });
 
-      const returnedItems = selectedReturns.map((s) => ({
-        ...s.rawItem,
-        quantity: s.returnQty,
-        line_total_paisa: s.returnQty * s.unitPricePaisa,
-      }));
+      const returnedItems = selectedReturns.map((s) => {
+        const itemRefund = returnedItemsValuePaisa > 0 && refundPaisa > 0
+          ? Math.round(refundPaisa * ((s.returnQty * s.unitPricePaisa) / returnedItemsValuePaisa))
+          : 0;
+        return {
+          ...s.rawItem,
+          quantity: s.returnQty,
+          unit_price_paisa: s.unitPricePaisa,
+          line_total_paisa: s.returnQty * s.unitPricePaisa,
+          refund_paisa: itemRefund,
+        };
+      });
 
       // Calculate new active items subtotal (only for unreturned units)
       const activeItemsSubtotalPaisa = updatedAllItems.reduce((sum, it) => {
@@ -2587,6 +2678,11 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                               Ordered: {item.totalOrderedQty || item.maxQty} units
                               {(item.alreadyReturnedQty || 0) > 0 ? ` • Already Returned: ${item.alreadyReturnedQty} units` : ""}
                               • Unit: Rs. {formatRs(item.unitPricePaisa)}
+                              {item.allocatedDiscountPaisa && item.allocatedDiscountPaisa > 0 ? (
+                                <span className="ml-1.5 px-1.5 py-0.5 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold rounded border border-rose-500/20">
+                                  -Rs. {formatRs(item.allocatedDiscountPaisa)} disc applied
+                                </span>
+                              ) : null}
                             </div>
                           </div>
                         </label>

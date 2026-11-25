@@ -238,15 +238,12 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
 
   // Realized Net Cash Collected (Total actual cash/payments collected minus all refunds)
   const calcOrderRealizedPaisa = (o: OnlineOrder): number => {
-    const advancePaid = o.advance_paid_paisa || 0;
-    const refunded = o.refund_amount_paisa || 0;
-    const net = advancePaid - refunded;
-    if (net > 0) return net;
-    // If order was returned RTO but shop retained a deduction fee
-    if ((o.payment_status === "RETURNED" || o.delivery_status === "RETURNED_RTO") && (o.deduction_amount_paisa || 0) > 0) {
+    if (o.payment_status === "RETURNED" || o.delivery_status === "RETURNED_RTO") {
       return o.deduction_amount_paisa || 0;
     }
-    return 0;
+    const orderVal = o.total_amount_paisa || 0;
+    const refunded = o.refund_amount_paisa || 0;
+    return Math.max(0, orderVal - refunded);
   };
 
   const waCollectedPaisa = waOrders.reduce((sum, o) => sum + calcOrderRealizedPaisa(o), 0);
@@ -281,9 +278,20 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     .reduce((sum, o) => sum + o.cod_balance_paisa, 0);
 
   const returnedOrders = periodFilteredOrders.filter(
-    (o) => o.delivery_status === "RETURNED_RTO" || o.payment_status === "RETURNED"
+    (o) =>
+      o.delivery_status === "RETURNED_RTO" ||
+      o.delivery_status === "PARTIAL_RETURN" ||
+      o.payment_status === "RETURNED" ||
+      (o.refund_amount_paisa || 0) > 0
   );
-  const totalReturnedValuePaisa = returnedOrders.reduce((sum, o) => sum + o.total_amount_paisa, 0);
+  const totalReturnedValuePaisa = returnedOrders.reduce((sum, o) => {
+    if (o.delivery_status === "RETURNED_RTO" || o.payment_status === "RETURNED") {
+      return sum + o.total_amount_paisa;
+    }
+    const ref = o.refund_amount_paisa || 0;
+    const ded = o.deduction_amount_paisa || 0;
+    return sum + (ref + ded > 0 ? ref + ded : o.total_amount_paisa);
+  }, 0);
   const totalRefundedPaisa = returnedOrders.reduce((sum, o) => sum + (o.refund_amount_paisa || 0), 0);
 
   // Filtering for table display
@@ -1320,7 +1328,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
           </div>
           <div className="flex items-baseline justify-between mt-1">
             <span className="text-2xl font-bold font-mono text-rose-600 dark:text-rose-400">
-              {returnedOrders.length} Parcels
+              {returnedOrders.length} {returnedOrders.some(o => o.delivery_status === "PARTIAL_RETURN") ? (returnedOrders.length === 1 ? "Return (Partial)" : "Returns") : "Parcels"}
             </span>
             <span className="text-xs font-mono font-bold text-rose-700 dark:text-rose-300">
               Rs. {formatRs(totalReturnedValuePaisa)}

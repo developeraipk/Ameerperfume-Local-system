@@ -6918,17 +6918,57 @@ impl DatabaseManager {
                 ))
             }) {
                 for (json_str, p_status, d_status, o_subtotal, o_total, o_refund, o_deduct) in rows.flatten() {
-                    let is_ret = p_status == "RETURNED" || d_status == "RETURNED_RTO" || d_status == "RETURNED" || d_status == "PARTIAL_RETURN" || o_refund > 0;
+                    let is_full_order_return = (p_status == "RETURNED" || d_status == "RETURNED_RTO" || d_status == "RETURNED") && d_status != "PARTIAL_RETURN";
                     let actual_order_refund_paisa = if o_refund > 0 {
                         o_refund
-                    } else if o_total > 0 {
+                    } else if o_total > 0 && is_full_order_return {
                         (o_total - o_deduct).max(0)
                     } else {
                         0
                     };
 
                     if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
-                        for it in parsed {
+                        // First pass: identify returned items, their exact returned units, and compute total returned items value
+                        let mut ret_items_meta = Vec::new();
+                        let mut total_ret_val_paisa = 0i64;
+
+                        for it in &parsed {
+                            let item_ret_qty = it.get("returned_quantity").and_then(|v| v.as_i64()).unwrap_or(0);
+                            let item_status = it.get("return_status").and_then(|v| v.as_str()).unwrap_or("ACTIVE");
+                            let ordered_qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+
+                            let is_it_ret = if item_ret_qty > 0 || item_status == "RETURNED" || item_status == "PARTIAL_RETURN" {
+                                true
+                            } else if is_full_order_return {
+                                true
+                            } else {
+                                false
+                            };
+
+                            let ret_units = if item_ret_qty > 0 {
+                                item_ret_qty
+                            } else if is_it_ret {
+                                ordered_qty
+                            } else {
+                                0
+                            };
+
+                            let unit_p = it.get("unit_price_paisa").and_then(|p| p.as_i64()).unwrap_or_else(|| {
+                                let lt = it.get("line_total_paisa").and_then(|l| l.as_i64()).unwrap_or(0);
+                                (lt / ordered_qty.max(1)).max(0)
+                            });
+
+                            let ret_val = ret_units * unit_p;
+                            if is_it_ret && ret_units > 0 {
+                                total_ret_val_paisa += ret_val;
+                            }
+                            ret_items_meta.push((is_it_ret, ret_units, ret_val));
+                        }
+
+                        // Second pass: process each item
+                        for (idx, it) in parsed.iter().enumerate() {
+                            let (is_it_ret, ret_units, ret_val) = ret_items_meta[idx];
+
                             let itype = it.get("item_type").and_then(|v| v.as_str())
                                 .or_else(|| if it.get("attar_id").is_some() { Some("ATTAR") } else if it.get("product_id").is_some() { Some("PERFUME") } else { None })
                                 .unwrap_or("PERFUME");
@@ -6943,13 +6983,13 @@ impl DatabaseManager {
                                 raw_ltotal
                             };
 
-                            let refund_line_paisa = if is_ret {
-                                if o_total > 0 && actual_order_refund_paisa > 0 {
-                                    (actual_order_refund_paisa as f64 * (ltotal as f64 / o_total as f64)).round() as i64
+                            let refund_line_paisa = if is_it_ret && ret_units > 0 {
+                                if actual_order_refund_paisa > 0 && total_ret_val_paisa > 0 {
+                                    (actual_order_refund_paisa as f64 * (ret_val as f64 / total_ret_val_paisa as f64)).round() as i64
                                 } else if actual_order_refund_paisa > 0 {
                                     actual_order_refund_paisa
                                 } else {
-                                    ltotal
+                                    ret_val
                                 }
                             } else {
                                 0
@@ -6961,39 +7001,39 @@ impl DatabaseManager {
                             if is_tester {
                                 online_tester_sales += ltotal;
                                 online_tester_units += qty;
-                                if is_ret {
+                                if is_it_ret && ret_units > 0 {
                                     online_tester_ret_refunds += refund_line_paisa;
-                                    online_tester_ret_units += qty;
+                                    online_tester_ret_units += ret_units;
                                     online_returned_items.push(OnlineReturnedItemInfo {
                                         product_name: pname.to_string(),
                                         item_type: "TESTER".to_string(),
-                                        quantity: qty,
+                                        quantity: ret_units,
                                         line_total_paisa: refund_line_paisa,
                                     });
                                 }
                             } else if is_attar {
                                 online_attar_sales += ltotal;
                                 online_attar_units += qty;
-                                if is_ret {
+                                if is_it_ret && ret_units > 0 {
                                     online_attar_ret_refunds += refund_line_paisa;
-                                    online_attar_ret_units += qty;
+                                    online_attar_ret_units += ret_units;
                                     online_returned_items.push(OnlineReturnedItemInfo {
                                         product_name: pname.to_string(),
                                         item_type: "ATTAR".to_string(),
-                                        quantity: qty,
+                                        quantity: ret_units,
                                         line_total_paisa: refund_line_paisa,
                                     });
                                 }
                             } else {
                                 online_perfume_sales += ltotal;
                                 online_perfume_units += qty;
-                                if is_ret {
+                                if is_it_ret && ret_units > 0 {
                                     online_perfume_ret_refunds += refund_line_paisa;
-                                    online_perfume_ret_units += qty;
+                                    online_perfume_ret_units += ret_units;
                                     online_returned_items.push(OnlineReturnedItemInfo {
                                         product_name: pname.to_string(),
                                         item_type: "PERFUME".to_string(),
-                                        quantity: qty,
+                                        quantity: ret_units,
                                         line_total_paisa: refund_line_paisa,
                                     });
                                 }
@@ -7351,11 +7391,11 @@ impl DatabaseManager {
                 LEFT JOIN wholesale_invoices wi ON wp.wholesale_invoice_id = wi.wholesale_invoice_id
                 WHERE wp.payment_method = 'CASH' AND COALESCE(wi.is_voided, 0) = 0 AND {}
                 UNION ALL
-                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                SELECT MIN(oop.amount_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE UPPER(oop.payment_method) = 'CASH' AND {}
                 UNION ALL
-                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                SELECT MIN(oo.advance_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_orders oo
                 WHERE oo.advance_paid_paisa > 0 
                   AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH' 
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
@@ -7382,11 +7422,11 @@ impl DatabaseManager {
                    OR wp.notes LIKE '%easypaisa%')
                    AND COALESCE(wi.is_voided, 0) = 0 AND {}
                 UNION ALL
-                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                SELECT MIN(oop.amount_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%') AND {}
                 UNION ALL
-                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                SELECT MIN(oo.advance_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_orders oo
                 WHERE oo.advance_paid_paisa > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%') 
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
@@ -7413,11 +7453,11 @@ impl DatabaseManager {
                    OR wp.notes LIKE '%jazzcash%')
                    AND COALESCE(wi.is_voided, 0) = 0 AND {}
                 UNION ALL
-                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                SELECT MIN(oop.amount_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%') AND {}
                 UNION ALL
-                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                SELECT MIN(oo.advance_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_orders oo
                 WHERE oo.advance_paid_paisa > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%') 
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments) AND {}
@@ -7535,11 +7575,11 @@ impl DatabaseManager {
                 LEFT JOIN wholesale_invoices wi ON wp.wholesale_invoice_id = wi.wholesale_invoice_id
                 WHERE wp.payment_method = 'CASH' AND COALESCE(wi.is_voided, 0) = 0
                 UNION ALL
-                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                SELECT MIN(oop.amount_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE UPPER(oop.payment_method) = 'CASH'
                 UNION ALL
-                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                SELECT MIN(oo.advance_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_orders oo
                 WHERE oo.advance_paid_paisa > 0 
                   AND UPPER(COALESCE(oo.collection_method, 'CASH')) = 'CASH'
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
@@ -7566,11 +7606,11 @@ impl DatabaseManager {
                    OR wp.notes LIKE '%easypaisa%')
                    AND COALESCE(wi.is_voided, 0) = 0
                 UNION ALL
-                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                SELECT MIN(oop.amount_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE (UPPER(oop.payment_method) LIKE '%EASYPAISA%' OR UPPER(oop.payment_method) LIKE '%EASY_PAISA%')
                 UNION ALL
-                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                SELECT MIN(oo.advance_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_orders oo
                 WHERE oo.advance_paid_paisa > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASYPAISA%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%EASY_PAISA%')
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)
@@ -7597,11 +7637,11 @@ impl DatabaseManager {
                    OR wp.notes LIKE '%jazzcash%')
                    AND COALESCE(wi.is_voided, 0) = 0
                 UNION ALL
-                SELECT oop.amount_paid_paisa AS amount_paisa FROM online_order_payments oop
+                SELECT MIN(oop.amount_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_order_payments oop
                 JOIN online_orders oo ON oop.order_id = oo.order_id
                 WHERE (UPPER(oop.payment_method) LIKE '%JAZZCASH%' OR UPPER(oop.payment_method) LIKE '%JAZZ_CASH%')
                 UNION ALL
-                SELECT oo.advance_paid_paisa AS amount_paisa FROM online_orders oo
+                SELECT MIN(oo.advance_paid_paisa, oo.total_amount_paisa) AS amount_paisa FROM online_orders oo
                 WHERE oo.advance_paid_paisa > 0 
                   AND (UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZCASH%' OR UPPER(COALESCE(oo.collection_method, '')) LIKE '%JAZZ_CASH%')
                   AND oo.order_id NOT IN (SELECT order_id FROM online_order_payments)

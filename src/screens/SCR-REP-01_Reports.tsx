@@ -336,6 +336,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
     return acc + Math.max(0, o.total_amount_paisa - deduct);
   }, 0);
   const totalOnlineReturnsCount = returnedOnlineOrders.length;
+  const totalOnlineNetRevenuePaisa = Math.max(0, totalOnlineBilledPaisa - totalOnlineReturnsPaisa);
 
   // Combined Channel Returns:
   let displayReturnsPaisa = 0;
@@ -369,7 +370,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
     displayDiscountedCount = totalRetailDiscountedInvoicesCount;
   } else if (channelFilter === "ONLINE") {
     displayGrossRevenuePaisa = totalOnlineGrossPaisa;
-    displayRealizedRevenuePaisa = totalOnlineNetCollectedPaisa;
+    displayRealizedRevenuePaisa = totalOnlineNetRevenuePaisa;
     displayDiscountsPaisa = totalOnlineDiscountsPaisa;
     displayUnitsSold = totalOnlineUnits;
     displayDiscountedCount = totalOnlineDiscountedOrdersCount;
@@ -382,7 +383,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
   } else {
     // ALL Channels Combined
     displayGrossRevenuePaisa = totalRetailGrossPaisa + totalWholesaleGrossPaisa + totalOnlineGrossPaisa;
-    displayRealizedRevenuePaisa = totalRetailNetRevenuePaisa + totalWholesalePaidPaisa + totalOnlineNetCollectedPaisa;
+    displayRealizedRevenuePaisa = totalRetailNetRevenuePaisa + totalWholesalePaidPaisa + totalOnlineNetRevenuePaisa;
     displayDiscountsPaisa = totalRetailDiscountsPaisa + totalWholesaleDiscountsPaisa + totalOnlineDiscountsPaisa;
     displayUnitsSold = totalRetailBottlesSold + totalWholesaleUnits + totalOnlineUnits;
     displayDiscountedCount = totalRetailDiscountedInvoicesCount + totalWholesaleDiscountedCount + totalOnlineDiscountedOrdersCount;

@@ -1368,7 +1368,7 @@ export interface OnlineOrder {
   payment_custodian: "COURIER" | "STAFF_HANDLER" | "SETTLED" | "RETURNED";
   courier_partner: string;
   tracking_number: string;
-  delivery_status: "BOOKED" | "DISPATCHED" | "DELIVERED" | "RETURNED_RTO" | "CANCELLED";
+  delivery_status: "BOOKED" | "DISPATCHED" | "DELIVERED" | "RETURNED_RTO" | "PARTIAL_RETURN" | "CANCELLED";
   collected_by: string;
   collected_at?: string | null;
   collection_method?: string | null;

@@ -562,17 +562,20 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
               ...item,
               quantity: newQty,
               line_total_paisa: newQty * item.unit_price_paisa,
+              discount_paisa: item.discount_paisa ? Math.round((item.discount_paisa / (item.quantity || 1)) * newQty) : 0,
             }
           : item
       )
     );
   };
 
-  // Computations for New Order
+  // Computations for New Order (Gross items subtotal, offer bundle discounts, special discount)
   const newOrderSubtotalPaisa = orderItems.reduce((sum, it) => sum + it.line_total_paisa, 0);
+  const bundleDiscountPaisa = orderItems.reduce((sum, it) => sum + (it.discount_paisa || 0), 0);
   const deliveryPaisa = Math.max(0, Math.round((parseFloat(deliveryCharges) || 0) * 100));
-  const discountPaisa = Math.max(0, Math.round((parseFloat(discountRupees) || 0) * 100));
-  const newOrderTotalPaisa = Math.max(0, newOrderSubtotalPaisa + deliveryPaisa - discountPaisa);
+  const specialDiscountPaisa = Math.max(0, Math.round((parseFloat(discountRupees) || 0) * 100));
+  const totalOrderDiscountPaisa = bundleDiscountPaisa + specialDiscountPaisa;
+  const newOrderTotalPaisa = Math.max(0, newOrderSubtotalPaisa + deliveryPaisa - totalOrderDiscountPaisa);
   const advancePaisa = Math.min(newOrderTotalPaisa, Math.max(0, Math.round((parseFloat(advancePaidRupees) || 0) * 100)));
   const codBalancePaisa = Math.max(0, newOrderTotalPaisa - advancePaisa);
 
@@ -599,7 +602,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
         items_json: JSON.stringify(orderItems),
         subtotal_paisa: newOrderSubtotalPaisa,
         delivery_charges_paisa: deliveryPaisa,
-        discount_paisa: discountPaisa,
+        discount_paisa: totalOrderDiscountPaisa,
         total_amount_paisa: newOrderTotalPaisa,
         advance_paid_paisa: advancePaisa,
         cod_balance_paisa: codBalancePaisa,
@@ -2192,8 +2195,6 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
 
                                     const unpackedItems: OnlineOrderItem[] = preparedItems.map((p) => {
                                       const itemDisc = discMap.get(p.idx) || 0;
-                                      const effLineTotalPaisa = Math.max(0, p.regLineTotalPaisa - itemDisc);
-                                      const effUnitPricePaisa = Math.round(effLineTotalPaisa / p.q);
 
                                       const isTester = p.item.item_type === "TESTER" || 
                                         p.item.name.toLowerCase().includes("tester") || 
@@ -2209,21 +2210,25 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                                         attar_id: p.item.attar_id,
                                         quantity: p.q,
                                         size_ml: parsedMl,
-                                        unit_price_paisa: effUnitPricePaisa,
-                                        line_total_paisa: effLineTotalPaisa,
+                                        unit_price_paisa: p.regUnitPricePaisa,
+                                        line_total_paisa: p.regLineTotalPaisa,
+                                        discount_paisa: itemDisc,
                                         is_tester: isTester,
                                       };
                                     });
 
                                     setOrderItems([...orderItems, ...unpackedItems]);
                                   } else {
-                                    const pricePaisa = Math.round(off.bundle_price * 100);
+                                    const regularTotalPaisa = Math.round((off.regular_total || off.bundle_price) * 100);
+                                    const bundlePricePaisa = Math.round(off.bundle_price * 100);
+                                    const savingsPaisa = Math.max(0, regularTotalPaisa - bundlePricePaisa);
                                     const newItem: OnlineOrderItem = {
                                       name: `🎁 Offer: ${off.title}`,
                                       item_type: "OFFER",
                                       quantity: 1,
-                                      unit_price_paisa: pricePaisa,
-                                      line_total_paisa: pricePaisa,
+                                      unit_price_paisa: regularTotalPaisa,
+                                      line_total_paisa: regularTotalPaisa,
+                                      discount_paisa: savingsPaisa,
                                     };
                                     setOrderItems([...orderItems, newItem]);
                                   }
@@ -2365,7 +2370,14 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                         {orderItems.map((it, idx) => (
                           <tr key={idx}>
-                            <td className="p-2 font-sans font-semibold">{it.name}</td>
+                            <td className="p-2 font-sans font-semibold">
+                              <div>{it.name}</div>
+                              {it.discount_paisa && it.discount_paisa > 0 ? (
+                                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-mono font-normal block">
+                                  Deal Savings: -Rs. {formatRs(it.discount_paisa)}
+                                </span>
+                              ) : null}
+                            </td>
                             <td className="p-2 text-center">
                               <div className="flex items-center justify-center gap-1.5">
                                 <button
@@ -2387,7 +2399,12 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                             </td>
                             <td className="p-2 text-right">Rs. {formatRs(it.unit_price_paisa)}</td>
                             <td className="p-2 text-right font-bold text-emerald-600 dark:text-emerald-400">
-                              Rs. {formatRs(it.line_total_paisa)}
+                              <div>Rs. {formatRs(it.line_total_paisa)}</div>
+                              {it.discount_paisa && it.discount_paisa > 0 ? (
+                                <div className="text-[10px] text-slate-500 font-normal">
+                                  Net: Rs. {formatRs(it.line_total_paisa - it.discount_paisa)}
+                                </div>
+                              ) : null}
                             </td>
                             <td className="p-2 text-center">
                               <button
@@ -2466,9 +2483,18 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                 {/* Financial Summary Card */}
                 <div className="p-4 bg-slate-50 dark:bg-slate-950/80 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-col justify-between font-mono space-y-2.5">
                   <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-500 font-sans">Items Subtotal:</span>
+                    <span className="text-slate-500 font-sans">Gross Items Subtotal:</span>
                     <span className="font-bold">Rs. {formatRs(newOrderSubtotalPaisa)}</span>
                   </div>
+
+                  {bundleDiscountPaisa > 0 && (
+                    <div className="flex justify-between items-center text-xs text-amber-700 dark:text-amber-300 bg-amber-500/10 px-2 py-1 rounded-md">
+                      <span className="font-sans font-semibold flex items-center gap-1">
+                        🎁 Offer Deal Discount:
+                      </span>
+                      <span className="font-bold font-mono">-Rs. {formatRs(bundleDiscountPaisa)}</span>
+                    </div>
+                  )}
 
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-slate-500 font-sans">Delivery Charges:</span>
@@ -2490,9 +2516,17 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                         value={discountRupees}
                         onChange={(e) => setDiscountRupees(e.target.value)}
                         className="h-7 text-xs text-right font-mono text-rose-500"
+                        placeholder="0"
                       />
                     </div>
                   </div>
+
+                  {totalOrderDiscountPaisa > 0 && (
+                    <div className="flex justify-between items-center text-xs text-rose-600 dark:text-rose-400 font-semibold">
+                      <span className="font-sans">Total Discount Granted:</span>
+                      <span className="font-mono font-bold">-Rs. {formatRs(totalOrderDiscountPaisa)}</span>
+                    </div>
+                  )}
 
                   <div className="flex justify-between items-center text-sm font-bold border-t border-slate-200 dark:border-slate-800 pt-2">
                     <span className="font-sans">Total Order Value:</span>

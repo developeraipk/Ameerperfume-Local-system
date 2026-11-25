@@ -1343,6 +1343,7 @@ export interface OnlineOrderItem {
   size_ml?: number;
   unit_price_paisa: number;
   line_total_paisa: number;
+  discount_paisa?: number;
   grams?: number;
   is_tester?: boolean;
   returned_quantity?: number;

@@ -849,6 +849,14 @@ impl DatabaseManager {
             WHERE order_id IN (SELECT order_id FROM online_order_payments);
         ", []);
 
+        let _ = conn.execute("
+            UPDATE online_orders
+            SET subtotal_paisa = 430000,
+                discount_paisa = 30000,
+                total_amount_paisa = 400000
+            WHERE discount_paisa = 0 AND items_json LIKE '%DEAL 1%';
+        ", []);
+
         Ok((current_version.max(231), current_version < 231))
     }
 
@@ -8113,7 +8121,7 @@ impl DatabaseManager {
             }
         }
 
-        // 12. Discount History & Audit
+        // 12. Discount History & Audit (Retail POS + Online Orders / WhatsApp / Web)
         let mut disc_stmt = conn.prepare(&format!("
             SELECT 
                 si.invoice_id,
@@ -8128,9 +8136,21 @@ impl DatabaseManager {
             LEFT JOIN users u ON si.cashier_user_id = u.user_id
             LEFT JOIN salespersons sp ON si.salesperson_id = sp.salesperson_id
             WHERE si.is_voided = 0 AND (si.item_discount_paisa + si.special_discount_paisa) > 0 AND {}
-            ORDER BY si.invoice_date DESC, si.created_at DESC
+            UNION ALL
+            SELECT
+                oo.order_id,
+                oo.order_number,
+                oo.created_at,
+                oo.customer_phone,
+                (oo.subtotal_paisa + oo.delivery_charges_paisa) AS gross_total_paisa,
+                oo.discount_paisa AS disc_paisa,
+                oo.total_amount_paisa AS net_payable_paisa,
+                (oo.channel || ' Order') AS salesperson_name
+            FROM online_orders oo
+            WHERE oo.delivery_status != 'CANCELLED' AND oo.discount_paisa > 0 AND {}
+            ORDER BY invoice_date DESC
             LIMIT 50;
-        ", inv_cond_no_alias)).map_err(|e| e.to_string())?;
+        ", inv_cond_no_alias, onl_cond)).map_err(|e| e.to_string())?;
 
         let disc_rows = disc_stmt.query_map([], |r| {
             let sp_name: String = r.get(7)?;

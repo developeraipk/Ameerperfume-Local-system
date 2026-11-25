@@ -7323,7 +7323,18 @@ impl DatabaseManager {
         // Invariant: Total gross must always match or exceed the sum of categories, and no category gross should exceed total gross
         let category_sum_gross = final_perfume_gross_paisa + final_attar_gross_paisa + final_tester_gross_paisa;
         period_gross = category_sum_gross.max(period_gross);
-        final_net_sales = (period_gross - period_discount - period_refunds).max(0);
+
+        // Pending online COD for the selected period (strictly excluded from Net Sales until received/paid)
+        let period_online_pending_paisa: i64 = conn.query_row(
+            &format!(
+                "SELECT COALESCE(SUM(cod_balance_paisa), 0) FROM online_orders WHERE delivery_status != 'CANCELLED' AND payment_status NOT IN ('PAID', 'RETURNED') AND cod_balance_paisa > 0 AND {};",
+                onl_cond
+            ),
+            [],
+            |r| r.get(0)
+        ).unwrap_or(0);
+
+        final_net_sales = (period_gross - period_discount - period_refunds - period_online_pending_paisa).max(0);
 
         // Category discount breakdown (Retail + Wholesale)
         let (ret_perfume_disc, ret_perfume_disc_u, ret_attar_disc, ret_attar_disc_u, ret_tester_disc, ret_tester_disc_u): (i64, i64, i64, i64, i64, i64) = conn.query_row(

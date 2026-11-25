@@ -363,8 +363,8 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
     return acc + Math.max(0, o.total_amount_paisa - deduct);
   }, 0);
   const totalOnlineReturnsCount = returnedOnlineOrders.length;
-  // Net sales revenue: Pure Gross minus Discounts minus Customer Returns (Prevents double deduction on partial returns)
-  const totalOnlineNetRevenuePaisa = Math.max(0, totalOnlineGrossPaisa - totalOnlineDiscountsPaisa - totalOnlineReturnsPaisa);
+  // Realized Net Online Revenue: Strictly collected funds minus returns/refunds (pending COD is excluded until received)
+  const totalOnlineNetRevenuePaisa = totalOnlineNetCollectedPaisa;
 
   // Combined Channel Returns:
   let displayReturnsPaisa = 0;

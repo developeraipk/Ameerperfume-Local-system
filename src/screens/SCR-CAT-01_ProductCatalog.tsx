@@ -217,6 +217,9 @@ export const ProductCatalog: React.FC<ProductCatalogProps> = ({ currentUser, onN
 
   useEffect(() => {
     loadCatalog();
+    const handleGlobalRefresh = () => loadCatalog();
+    window.addEventListener("app:refresh-data", handleGlobalRefresh);
+    return () => window.removeEventListener("app:refresh-data", handleGlobalRefresh);
   }, []);
 
   const filtered = products.filter((p) => {

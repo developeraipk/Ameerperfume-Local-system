@@ -7756,7 +7756,7 @@ impl DatabaseManager {
         ).unwrap_or(0);
 
         let total_shop_expenses_paisa: i64 = conn.query_row(
-            &format!("SELECT COALESCE(SUM(amount_paisa), 0) FROM petty_expenses WHERE shift_id IS NOT NULL AND ({});", exp_cond),
+            &format!("SELECT COALESCE(SUM(amount_paisa), 0) FROM petty_expenses WHERE ({});", exp_cond),
             [],
             |r| r.get(0)
         ).unwrap_or(0);
@@ -9527,19 +9527,84 @@ impl DatabaseManager {
 
         // Stock deduction for items
         if let Ok(parsed_items) = serde_json::from_str::<Vec<serde_json::Value>>(&payload.items_json) {
-            for it in parsed_items {
+            let mut offers_map: std::collections::HashMap<String, Vec<serde_json::Value>> = std::collections::HashMap::new();
+            if let Ok(mut stmt) = tx.prepare("SELECT title, items_json FROM promotional_offers;") {
+                if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+                    for (t, ij) in rows.flatten() {
+                        if let Ok(sub) = serde_json::from_str::<Vec<serde_json::Value>>(&ij) {
+                            offers_map.insert(t.to_lowercase().trim().to_string(), sub);
+                        }
+                    }
+                }
+            }
+
+            for (idx, it) in parsed_items.iter().enumerate() {
+                let itype = it.get("item_type").and_then(|t| t.as_str()).unwrap_or("").to_uppercase();
+                let is_tester = itype == "TESTER"
+                    || it.get("is_tester").and_then(|t| t.as_bool()).unwrap_or(false)
+                    || it.get("name").and_then(|n| n.as_str()).map(|n| n.to_lowercase().contains("tester") || n.to_lowercase().contains("sample")).unwrap_or(false);
+
+                if is_tester || itype == "ATTAR" {
+                    continue;
+                }
+
                 let qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
-                if let Some(pid) = it.get("product_id").and_then(|p| p.as_str()) {
-                    let _ = tx.execute(
-                        "UPDATE finished_products SET current_stock_units = MAX(0, current_stock_units - ?) WHERE product_id = ?;",
-                        rusqlite::params![qty, pid],
-                    );
-                } else if let Some(aid) = it.get("attar_id").and_then(|a| a.as_str()) {
-                    let grams = it.get("grams").and_then(|g| g.as_f64()).unwrap_or(qty as f64 * 12.0);
-                    let _ = tx.execute(
-                        "UPDATE attar_products SET current_stock_grams = MAX(0, current_stock_grams - ?) WHERE attar_id = ?;",
-                        rusqlite::params![grams, aid],
-                    );
+
+                if itype == "OFFER" {
+                    let offer_name = it.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    let clean_title = offer_name.replace("🎁 Offer: ", "").trim().to_lowercase();
+                    if let Some(sub_items) = offers_map.get(&clean_title) {
+                        for (s_idx, sub) in sub_items.iter().enumerate() {
+                            let sub_type = sub.get("item_type").and_then(|t| t.as_str()).unwrap_or("").to_uppercase();
+                            let sub_tester = sub_type == "TESTER" || sub.get("is_tester").and_then(|t| t.as_bool()).unwrap_or(false);
+                            if sub_type == "PERFUME" && !sub_tester {
+                                if let Some(spid) = sub.get("product_id").and_then(|p| p.as_str()) {
+                                    let sub_q = sub.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+                                    let total_sub = sub_q * qty;
+                                    let is_fp: bool = tx.query_row(
+                                        "SELECT EXISTS(SELECT 1 FROM finished_products WHERE product_id = ?);",
+                                        [spid],
+                                        |r| r.get(0),
+                                    ).unwrap_or(false);
+                                    if is_fp && total_sub > 0 {
+                                        let _ = tx.execute(
+                                            "UPDATE finished_products SET current_stock_units = MAX(0, current_stock_units - ?), updated_at = datetime('now', 'localtime') WHERE product_id = ?;",
+                                            rusqlite::params![total_sub, spid],
+                                        );
+                                        let bal: i32 = tx.query_row("SELECT current_stock_units FROM finished_products WHERE product_id = ?;", [spid], |r| r.get(0)).unwrap_or(0);
+                                        let mov_id = format!("sm_onl_{}_{}_{}_{}", order_id, spid, idx, s_idx);
+                                        let _ = tx.execute(
+                                            "INSERT INTO stock_movements
+                                            (movement_id, entity_type, material_id, finished_product_id, batch_id, movement_type, delta_quantity, unit_cost_paisa, running_balance_after, reference_document_type, reference_document_id, shortage_oversell_flag, notes, authorized_by_user_id, occurred_at, created_at)
+                                            VALUES (?, 'FINISHED_PERFUME', NULL, ?, NULL, 'ONLINE_SALE', ?, 0, ?, 'ONLINE_ORDER', ?, 0, 'Online order booking dispatch', ?, ?, ?);",
+                                            rusqlite::params![mov_id, spid, -total_sub, bal, order_id, payload.created_by_user_id, now_str, now_str],
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(pid) = it.get("product_id").and_then(|p| p.as_str()) {
+                    let is_fp: bool = tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM finished_products WHERE product_id = ?);",
+                        [pid],
+                        |r| r.get(0),
+                    ).unwrap_or(false);
+
+                    if is_fp && qty > 0 {
+                        let _ = tx.execute(
+                            "UPDATE finished_products SET current_stock_units = MAX(0, current_stock_units - ?), updated_at = datetime('now', 'localtime') WHERE product_id = ?;",
+                            rusqlite::params![qty, pid],
+                        );
+                        let bal: i32 = tx.query_row("SELECT current_stock_units FROM finished_products WHERE product_id = ?;", [pid], |r| r.get(0)).unwrap_or(0);
+                        let mov_id = format!("sm_onl_{}_{}_{}_{}", order_id, pid, idx, chrono::Utc::now().timestamp_millis());
+                        let _ = tx.execute(
+                            "INSERT INTO stock_movements
+                            (movement_id, entity_type, material_id, finished_product_id, batch_id, movement_type, delta_quantity, unit_cost_paisa, running_balance_after, reference_document_type, reference_document_id, shortage_oversell_flag, notes, authorized_by_user_id, occurred_at, created_at)
+                            VALUES (?, 'FINISHED_PERFUME', NULL, ?, NULL, 'ONLINE_SALE', ?, 0, ?, 'ONLINE_ORDER', ?, 0, 'Online order booking dispatch', ?, ?, ?);",
+                            rusqlite::params![mov_id, pid, -qty, bal, order_id, payload.created_by_user_id, now_str, now_str],
+                        );
+                    }
                 }
             }
         }
@@ -9675,23 +9740,8 @@ impl DatabaseManager {
             ).map_err(|e| format!("Order not found: {}", e))?
         };
 
-        if let Ok(parsed_items) = serde_json::from_str::<Vec<serde_json::Value>>(&items_to_restock_json) {
-            for it in parsed_items {
-                let qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
-                if let Some(pid) = it.get("product_id").and_then(|p| p.as_str()) {
-                    let _ = tx.execute(
-                        "UPDATE finished_products SET current_stock_units = current_stock_units + ? WHERE product_id = ?;",
-                        rusqlite::params![qty, pid],
-                    );
-                } else if let Some(aid) = it.get("attar_id").and_then(|a| a.as_str()) {
-                    let grams = it.get("grams").and_then(|g| g.as_f64()).unwrap_or(qty as f64 * 12.0);
-                    let _ = tx.execute(
-                        "UPDATE attar_products SET current_stock_grams = current_stock_grams + ? WHERE attar_id = ?;",
-                        rusqlite::params![grams, aid],
-                    );
-                }
-            }
-        }
+        // Restock returned finished perfume products back into inventory
+        let _ = Self::restock_online_items_tx(&tx, &items_to_restock_json, &payload.order_id, &payload.user_id, "Customer Return Modal");
 
         let refund_amt = payload.refund_amount_paisa.unwrap_or(0);
         let deduct_amt = payload.deduction_amount_paisa.unwrap_or(0);
@@ -9790,6 +9840,107 @@ impl DatabaseManager {
         Ok(true)
     }
 
+    fn restock_online_items_tx(
+        tx: &rusqlite::Transaction,
+        items_json_str: &str,
+        order_id: &str,
+        user_id: &str,
+        reason: &str,
+    ) -> Result<i64, String> {
+        let mut restocked_units = 0i64;
+        let parsed_items: Vec<serde_json::Value> = match serde_json::from_str(items_json_str) {
+            Ok(itms) => itms,
+            Err(_) => return Ok(0),
+        };
+
+        let mut offers_map: std::collections::HashMap<String, Vec<serde_json::Value>> = std::collections::HashMap::new();
+        if let Ok(mut stmt) = tx.prepare("SELECT title, items_json FROM promotional_offers;") {
+            if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+                for (t, ij) in rows.flatten() {
+                    if let Ok(sub) = serde_json::from_str::<Vec<serde_json::Value>>(&ij) {
+                        offers_map.insert(t.to_lowercase().trim().to_string(), sub);
+                    }
+                }
+            }
+        }
+
+        let now_str = chrono::Utc::now().to_rfc3339();
+
+        for (idx, it) in parsed_items.iter().enumerate() {
+            let itype = it.get("item_type").and_then(|t| t.as_str()).unwrap_or("").to_uppercase();
+            let is_tester = itype == "TESTER"
+                || it.get("is_tester").and_then(|t| t.as_bool()).unwrap_or(false)
+                || it.get("name").and_then(|n| n.as_str()).map(|n| n.to_lowercase().contains("tester") || n.to_lowercase().contains("sample")).unwrap_or(false);
+
+            if is_tester || itype == "ATTAR" {
+                continue;
+            }
+
+            let qty = it.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+
+            if itype == "OFFER" {
+                let offer_name = it.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let clean_title = offer_name.replace("🎁 Offer: ", "").trim().to_lowercase();
+                if let Some(sub_items) = offers_map.get(&clean_title) {
+                    for (s_idx, sub) in sub_items.iter().enumerate() {
+                        let sub_type = sub.get("item_type").and_then(|t| t.as_str()).unwrap_or("").to_uppercase();
+                        let sub_tester = sub_type == "TESTER" || sub.get("is_tester").and_then(|t| t.as_bool()).unwrap_or(false);
+                        if sub_type == "PERFUME" && !sub_tester {
+                            if let Some(spid) = sub.get("product_id").and_then(|p| p.as_str()) {
+                                let sub_q = sub.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+                                let total_sub = sub_q * qty;
+                                let is_fp: bool = tx.query_row(
+                                    "SELECT EXISTS(SELECT 1 FROM finished_products WHERE product_id = ?);",
+                                    [spid],
+                                    |r| r.get(0),
+                                ).unwrap_or(false);
+                                if is_fp && total_sub > 0 {
+                                    let _ = tx.execute(
+                                        "UPDATE finished_products SET current_stock_units = current_stock_units + ?, updated_at = datetime('now', 'localtime') WHERE product_id = ?;",
+                                        rusqlite::params![total_sub, spid],
+                                    );
+                                    let bal: i32 = tx.query_row("SELECT current_stock_units FROM finished_products WHERE product_id = ?;", [spid], |r| r.get(0)).unwrap_or(0);
+                                    let mov_id = format!("sm_onl_ret_{}_{}_{}_{}_{}", order_id, spid, idx, s_idx, chrono::Utc::now().timestamp_millis());
+                                    let _ = tx.execute(
+                                        "INSERT INTO stock_movements
+                                        (movement_id, entity_type, material_id, finished_product_id, batch_id, movement_type, delta_quantity, unit_cost_paisa, running_balance_after, reference_document_type, reference_document_id, shortage_oversell_flag, notes, authorized_by_user_id, occurred_at, created_at)
+                                        VALUES (?, 'FINISHED_PERFUME', NULL, ?, NULL, 'RETURN_RESTOCK', ?, 0, ?, 'ONLINE_ORDER', ?, 0, ?, ?, ?, ?);",
+                                        rusqlite::params![mov_id, spid, total_sub, bal, order_id, format!("Online order return - {}", reason), user_id, now_str, now_str],
+                                    );
+                                    restocked_units += total_sub;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if let Some(pid) = it.get("product_id").and_then(|p| p.as_str()) {
+                let is_fp: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM finished_products WHERE product_id = ?);",
+                    [pid],
+                    |r| r.get(0),
+                ).unwrap_or(false);
+
+                if is_fp && qty > 0 {
+                    let _ = tx.execute(
+                        "UPDATE finished_products SET current_stock_units = current_stock_units + ?, updated_at = datetime('now', 'localtime') WHERE product_id = ?;",
+                        rusqlite::params![qty, pid],
+                    );
+                    let bal: i32 = tx.query_row("SELECT current_stock_units FROM finished_products WHERE product_id = ?;", [pid], |r| r.get(0)).unwrap_or(0);
+                    let mov_id = format!("sm_onl_ret_{}_{}_{}_{}", order_id, pid, idx, chrono::Utc::now().timestamp_millis());
+                    let _ = tx.execute(
+                        "INSERT INTO stock_movements
+                        (movement_id, entity_type, material_id, finished_product_id, batch_id, movement_type, delta_quantity, unit_cost_paisa, running_balance_after, reference_document_type, reference_document_id, shortage_oversell_flag, notes, authorized_by_user_id, occurred_at, created_at)
+                        VALUES (?, 'FINISHED_PERFUME', NULL, ?, NULL, 'RETURN_RESTOCK', ?, 0, ?, 'ONLINE_ORDER', ?, 0, ?, ?, ?, ?);",
+                        rusqlite::params![mov_id, pid, qty, bal, order_id, format!("Online order return - {}", reason), user_id, now_str, now_str],
+                    );
+                    restocked_units += qty;
+                }
+            }
+        }
+
+        Ok(restocked_units)
+    }
+
     pub fn update_online_order_status(
         &self,
         order_id: &str,
@@ -9797,23 +9948,76 @@ impl DatabaseManager {
         tracking_number: Option<&str>,
         courier_partner: Option<&str>,
     ) -> Result<bool, String> {
-        let conn = self.get_connection().map_err(|e| e.to_string())?;
-        
-        if let (Some(track), Some(courier)) = (tracking_number, courier_partner) {
-            conn.execute("
-                UPDATE online_orders
-                SET delivery_status = ?, tracking_number = ?, courier_partner = ?
-                WHERE order_id = ?;
-            ", rusqlite::params![delivery_status, track, courier, order_id])
-                .map_err(|e| e.to_string())?;
+        let mut conn = self.get_connection().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+        let (prev_status, items_json): (String, String) = tx.query_row(
+            "SELECT delivery_status, items_json FROM online_orders WHERE order_id = ?;",
+            [order_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).map_err(|e| format!("Order not found: {}", e))?;
+
+        let is_now_returned = delivery_status == "RETURNED_RTO" || delivery_status == "CANCELLED" || delivery_status == "RETURNED";
+        let was_already_returned = prev_status == "RETURNED_RTO" || prev_status == "CANCELLED" || prev_status == "RETURNED";
+
+        let mut updated_items_json = items_json.clone();
+
+        if is_now_returned && !was_already_returned {
+            // Restock all unreturned perfume products back into finished_products
+            let _ = Self::restock_online_items_tx(&tx, &items_json, order_id, "usr_online_mgr", delivery_status);
+
+            // Update items_json to mark items as returned
+            if let Ok(mut parsed) = serde_json::from_str::<Vec<serde_json::Value>>(&items_json) {
+                for item in &mut parsed {
+                    if let Some(obj) = item.as_object_mut() {
+                        let qty = obj.get("quantity").and_then(|q| q.as_i64()).unwrap_or(1);
+                        obj.insert("returned_quantity".to_string(), serde_json::Value::Number(qty.into()));
+                        obj.insert("return_status".to_string(), serde_json::Value::String("RETURNED".to_string()));
+                    }
+                }
+                if let Ok(ser) = serde_json::to_string(&parsed) {
+                    updated_items_json = ser;
+                }
+            }
+
+            if let (Some(track), Some(courier)) = (tracking_number, courier_partner) {
+                tx.execute("
+                    UPDATE online_orders
+                    SET delivery_status = ?, payment_status = 'RETURNED', payment_custodian = 'RETURNED', cod_balance_paisa = 0,
+                        items_json = ?, tracking_number = ?, courier_partner = ?,
+                        collected_at = datetime('now', 'localtime')
+                    WHERE order_id = ?;
+                ", rusqlite::params![delivery_status, updated_items_json, track, courier, order_id])
+                    .map_err(|e| e.to_string())?;
+            } else {
+                tx.execute("
+                    UPDATE online_orders
+                    SET delivery_status = ?, payment_status = 'RETURNED', payment_custodian = 'RETURNED', cod_balance_paisa = 0,
+                        items_json = ?,
+                        collected_at = datetime('now', 'localtime')
+                    WHERE order_id = ?;
+                ", rusqlite::params![delivery_status, updated_items_json, order_id])
+                    .map_err(|e| e.to_string())?;
+            }
         } else {
-            conn.execute("
-                UPDATE online_orders
-                SET delivery_status = ?
-                WHERE order_id = ?;
-            ", rusqlite::params![delivery_status, order_id])
-                .map_err(|e| e.to_string())?;
+            if let (Some(track), Some(courier)) = (tracking_number, courier_partner) {
+                tx.execute("
+                    UPDATE online_orders
+                    SET delivery_status = ?, tracking_number = ?, courier_partner = ?
+                    WHERE order_id = ?;
+                ", rusqlite::params![delivery_status, track, courier, order_id])
+                    .map_err(|e| e.to_string())?;
+            } else {
+                tx.execute("
+                    UPDATE online_orders
+                    SET delivery_status = ?
+                    WHERE order_id = ?;
+                ", rusqlite::params![delivery_status, order_id])
+                    .map_err(|e| e.to_string())?;
+            }
         }
+
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(true)
     }
 }

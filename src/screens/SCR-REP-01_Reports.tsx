@@ -185,7 +185,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter((e) => {
-      if (!filterByPeriod(e.created_at)) return false;
+      if (!filterByPeriod(e.expense_date || e.created_at)) return false;
       if (!expensesSearch.trim()) return true;
       const q = expensesSearch.toLowerCase();
       return (

@@ -112,6 +112,7 @@ export const ShopExpenses: React.FC<ShopExpensesProps> = ({ currentUser, status 
       setAuthorizedByName("");
       setBroughtByName("");
       loadData();
+      window.dispatchEvent(new CustomEvent("app:refresh-data"));
     } catch (err) {
       setNotification({
         type: "error",

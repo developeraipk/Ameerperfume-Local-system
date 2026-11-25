@@ -205,6 +205,7 @@ export const EmployeeSalaries: React.FC<EmployeeSalariesProps> = ({ currentUser 
       setAmountRupees("");
       setNotes("");
       loadData();
+      window.dispatchEvent(new CustomEvent("app:refresh-data"));
       setSelectedPayoutForSlip(result);
     } catch (err) {
       console.error("Failed to disburse salary:", err);

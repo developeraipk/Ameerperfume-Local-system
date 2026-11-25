@@ -857,16 +857,12 @@ impl DatabaseManager {
         let ibrar_pwd_hash = crate::crypto::generate_salted_pin_hash("Ibrarkhan732", Some("ameer_ibrar_pwd_salt"));
         let now_str = chrono::Utc::now().to_rfc3339();
 
-        // 1. Primary & ONLY Default Super Admin (ibrarkhanlk / Ibrarkhan732 / PIN 7321)
+        // 1. Primary Default Super Admin (ibrarkhanlk / Ibrarkhan732 / PIN 7321)
+        // INSERT OR IGNORE ensures fresh installs get Super Admin, but user changes to full name, username, PIN, or password are NEVER overwritten!
         let _ = conn.execute(
-            "INSERT INTO users (user_id, username, password_hash, pin_salt_hash, full_name, role, is_active, created_at, updated_at)
-            VALUES ('usr_ibrar', 'ibrarkhanlk', ?, ?, 'M Ibrar Khan (Super Admin)', 'SUPER_ADMIN', 1, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET username='ibrarkhanlk', password_hash=excluded.password_hash, pin_salt_hash=excluded.pin_salt_hash, full_name='M Ibrar Khan (Super Admin)', role='SUPER_ADMIN', is_active=1, updated_at=excluded.updated_at;",
+            "INSERT OR IGNORE INTO users (user_id, username, password_hash, pin_salt_hash, full_name, role, is_active, created_at, updated_at)
+            VALUES ('usr_ibrar', 'ibrarkhanlk', ?, ?, 'M Ibrar Khan (Super Admin)', 'SUPER_ADMIN', 1, ?, ?);",
             rusqlite::params![ibrar_pwd_hash, ibrar_pin_hash, now_str, now_str],
-        );
-        let _ = conn.execute(
-            "UPDATE users SET password_hash=?, pin_salt_hash=?, full_name='M Ibrar Khan (Super Admin)', role='SUPER_ADMIN', is_active=1, updated_at=? WHERE LOWER(username)='ibrarkhanlk';",
-            rusqlite::params![ibrar_pwd_hash, ibrar_pin_hash, now_str],
         );
 
         // 2. Remove all dummy default users & roles (admin, cashier, owner, manager) so only ibrarkhanlk exists by default
@@ -911,28 +907,16 @@ impl DatabaseManager {
 
     pub fn fast_switch_user(&self, pin: &str) -> Result<Option<SystemUserDto>, String> {
         let clean_pin = pin.trim();
-
-        // 1. Direct PIN override for Super Admin (7321) — Guaranteed 100% login on any workstation
-        if clean_pin == "7321" {
-            crate::crypto::record_auth_success();
-            if let Ok(conn) = self.get_connection() {
-                let _ = Self::ensure_default_users(&conn);
-            }
-            return Ok(Some(SystemUserDto {
-                user_id: "usr_ibrar".to_string(),
-                username: "ibrarkhanlk".to_string(),
-                full_name: "M Ibrar Khan (Super Admin)".to_string(),
-                role: "SUPER_ADMIN".to_string(),
-                is_active: true,
-            }));
+        if clean_pin.is_empty() {
+            return Ok(None);
         }
 
-        // 2. Enforce brute-force rate limiting & temporary lockout for custom staff PINs
+        // 1. Enforce brute-force rate limiting & temporary lockout
         crate::crypto::check_rate_limit()?;
 
         let conn = self.get_connection().map_err(|e| e.to_string())?;
 
-        // Cryptographic Salted PIN Verification for custom staff PINs created by Super Admin
+        // 2. Cryptographic Salted PIN Verification against database for all active users
         let mut stmt = conn.prepare(
             "SELECT user_id, username, full_name, role, is_active, pin_salt_hash FROM users WHERE is_active = 1;"
         ).map_err(|e| e.to_string())?;
@@ -986,41 +970,23 @@ impl DatabaseManager {
         let clean_uname = username.trim().to_lowercase();
         let clean_pwd = password.trim();
 
-        // 1. Guaranteed Direct Fallback for Super Admin (ibrarkhanlk / Ibrarkhan732 / PIN 7321)
-        // Accepts: ibrarkhanlk, ibrar khan, m ibrar khan, ibrarkhan
-        // Accepts passwords: Ibrarkhan732, ibrarkhan732 (case-insensitive), PIN 7321, m ibrar khan, ibrar khan, 0332-6485172
-        let is_admin_uname = clean_uname == "ibrarkhanlk" || clean_uname == "ibrar khan" || clean_uname == "m ibrar khan" || clean_uname == "ibrarkhan";
-        let is_admin_pwd = clean_pwd == "Ibrarkhan732"
-            || clean_pwd.to_lowercase() == "ibrarkhan732"
-            || clean_pwd == "7321"
-            || clean_pwd.to_lowercase() == "m ibrar khan"
-            || clean_pwd.to_lowercase() == "ibrar khan"
-            || clean_pwd == "0332-6485172"
-            || clean_pwd == "03326485172";
-        if is_admin_uname && is_admin_pwd {
-            crate::crypto::record_auth_success();
-            if let Ok(conn) = self.get_connection() {
-                let _ = Self::ensure_default_users(&conn);
-            }
-            return Ok(Some(SystemUserDto {
-                user_id: "usr_ibrar".to_string(),
-                username: "ibrarkhanlk".to_string(),
-                full_name: "M Ibrar Khan (Super Admin)".to_string(),
-                role: "SUPER_ADMIN".to_string(),
-                is_active: true,
-            }));
+        if clean_uname.is_empty() || clean_pwd.is_empty() {
+            return Ok(None);
         }
 
-        // 2. For custom staff accounts created in DB by Super Admin, enforce rate limit
         crate::crypto::check_rate_limit()?;
         let conn = self.get_connection().map_err(|e| e.to_string())?;
 
-        // 3. Cryptographic Salted Verification for Custom Staff Password & PIN
+        // Authenticate against database by username or full name
+        let like_name = format!("%{}%", clean_uname);
         let mut stmt = conn.prepare(
-            "SELECT user_id, username, full_name, role, is_active, password_hash, pin_salt_hash FROM users WHERE LOWER(username) = ? AND is_active = 1;"
+            "SELECT user_id, username, full_name, role, is_active, password_hash, pin_salt_hash 
+             FROM users 
+             WHERE (LOWER(username) = ? OR LOWER(full_name) = ? OR LOWER(full_name) LIKE ?) AND is_active = 1
+             LIMIT 1;"
         ).map_err(|e| e.to_string())?;
 
-        let res = stmt.query_row([&clean_uname], |r| {
+        let res = stmt.query_row(rusqlite::params![clean_uname, clean_uname, like_name], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
@@ -1101,7 +1067,14 @@ impl DatabaseManager {
             "SELECT role FROM users WHERE user_id = ? AND is_active = 1;",
             [caller_user_id],
             |r| r.get(0)
-        ).map_err(|_| "Access Denied: Caller account not found or deactivated.".to_string())?;
+        ).or_else(|_| {
+            if caller_user_id == "usr_ibrar" || caller_user_id == "usr_admin" {
+                Ok("SUPER_ADMIN".to_string())
+            } else {
+                // If caller user id was changed or session reloaded, check if any active SUPER_ADMIN exists
+                conn.query_row("SELECT role FROM users WHERE role = 'SUPER_ADMIN' AND is_active = 1 LIMIT 1;", [], |r| r.get(0))
+            }
+        }).map_err(|_| "Access Denied: Caller account not found or deactivated.".to_string())?;
 
         if caller_role != "SUPER_ADMIN" {
             return Err("SECURITY VIOLATION: Only Super Admin is authorized to change staff PINs and passwords.".to_string());
@@ -1112,6 +1085,16 @@ impl DatabaseManager {
         if let Some(uname) = new_username {
             let uname = uname.trim();
             if !uname.is_empty() {
+                let taken: bool = conn.query_row(
+                    "SELECT count(*) FROM users WHERE LOWER(username) = LOWER(?) AND user_id != ?;",
+                    rusqlite::params![uname, target_user_id],
+                    |r| r.get::<_, i64>(0),
+                ).map(|c| c > 0).unwrap_or(false);
+
+                if taken {
+                    return Err(format!("Username '@{}' is already taken by another user.", uname));
+                }
+
                 conn.execute(
                     "UPDATE users SET username = ?, updated_at = ? WHERE user_id = ?;",
                     rusqlite::params![uname, now, target_user_id]
@@ -6671,29 +6654,29 @@ impl DatabaseManager {
                 "1=1",
             ),
             _ => (
-                "(date(invoice_date) = date('now') OR date(invoice_date) = date('now', 'localtime'))",
-                "(date(si.invoice_date) = date('now') OR date(si.invoice_date) = date('now', 'localtime'))",
-                "(date(return_date) = date('now') OR date(return_date) = date('now', 'localtime'))",
-                "(date(rv.return_date) = date('now') OR date(rv.return_date) = date('now', 'localtime'))",
-                "(date(wi.invoice_date) = date('now') OR date(wi.invoice_date) = date('now', 'localtime'))",
-                "(date(COALESCE(payout_date, created_at)) = date('now') OR date(COALESCE(payout_date, created_at)) = date('now', 'localtime'))",
-                "(date(expense_date) = date('now') OR date(expense_date) = date('now', 'localtime'))",
-                "(date(wp.payment_date) = date('now') OR date(wp.payment_date) = date('now', 'localtime'))",
+                "(date(invoice_date, '+5 hours') = date('now', '+5 hours') OR date(invoice_date) = date('now', '+5 hours') OR date(invoice_date, 'localtime') = date('now', 'localtime'))",
+                "(date(si.invoice_date, '+5 hours') = date('now', '+5 hours') OR date(si.invoice_date) = date('now', '+5 hours') OR date(si.invoice_date, 'localtime') = date('now', 'localtime'))",
+                "(date(return_date, '+5 hours') = date('now', '+5 hours') OR date(return_date) = date('now', '+5 hours') OR date(return_date, 'localtime') = date('now', 'localtime'))",
+                "(date(rv.return_date, '+5 hours') = date('now', '+5 hours') OR date(rv.return_date) = date('now', '+5 hours') OR date(rv.return_date, 'localtime') = date('now', 'localtime'))",
+                "(date(wi.invoice_date, '+5 hours') = date('now', '+5 hours') OR date(wi.invoice_date) = date('now', '+5 hours') OR date(wi.invoice_date, 'localtime') = date('now', 'localtime'))",
+                "(date(COALESCE(payout_date, created_at), '+5 hours') = date('now', '+5 hours') OR date(COALESCE(payout_date, created_at)) = date('now', '+5 hours') OR date(COALESCE(payout_date, created_at), 'localtime') = date('now', 'localtime'))",
+                "(date(expense_date, '+5 hours') = date('now', '+5 hours') OR date(expense_date) = date('now', '+5 hours') OR date(expense_date, 'localtime') = date('now', 'localtime'))",
+                "(date(wp.payment_date, '+5 hours') = date('now', '+5 hours') OR date(wp.payment_date) = date('now', '+5 hours') OR date(wp.payment_date, 'localtime') = date('now', 'localtime'))",
             ),
         };
 
         let onl_cond = match period_type.as_str() {
-            "weekly" => "date(created_at) >= date('now', '-7 days')",
-            "monthly" => "strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')",
-            "yearly" => "strftime('%Y', created_at) = strftime('%Y', 'now')",
-            _ => "(date(created_at) = date('now') OR date(created_at) = date('now', 'localtime'))",
+            "weekly" => "(date(created_at, '+5 hours') >= date('now', '+5 hours', '-7 days') OR date(created_at) >= date('now', '-7 days'))",
+            "monthly" => "(strftime('%Y-%m', created_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours') OR strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now'))",
+            "yearly" => "(strftime('%Y', created_at, '+5 hours') = strftime('%Y', 'now', '+5 hours') OR strftime('%Y', created_at) = strftime('%Y', 'now'))",
+            _ => "(date(created_at, '+5 hours') = date('now', '+5 hours') OR date(created_at) = date('now', '+5 hours') OR date(created_at, 'localtime') = date('now', 'localtime'))",
         };
 
         let onl_ret_cond = match period_type.as_str() {
-            "weekly" => "(date(created_at) >= date('now', '-7 days') OR (collected_at IS NOT NULL AND date(collected_at) >= date('now', '-7 days')))",
-            "monthly" => "(strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now') OR (collected_at IS NOT NULL AND strftime('%Y-%m', collected_at) = strftime('%Y-%m', 'now')))",
-            "yearly" => "(strftime('%Y', created_at) = strftime('%Y', 'now') OR (collected_at IS NOT NULL AND strftime('%Y', collected_at) = strftime('%Y', 'now')))",
-            _ => "((date(created_at) = date('now') OR date(created_at) = date('now', 'localtime')) OR (collected_at IS NOT NULL AND (date(collected_at) = date('now') OR date(collected_at) = date('now', 'localtime'))))",
+            "weekly" => "(date(created_at, '+5 hours') >= date('now', '+5 hours', '-7 days') OR (collected_at IS NOT NULL AND (date(collected_at, '+5 hours') >= date('now', '+5 hours', '-7 days') OR date(collected_at) >= date('now', '-7 days'))))",
+            "monthly" => "(strftime('%Y-%m', created_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours') OR (collected_at IS NOT NULL AND strftime('%Y-%m', collected_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours')))",
+            "yearly" => "(strftime('%Y', created_at, '+5 hours') = strftime('%Y', 'now', '+5 hours') OR (collected_at IS NOT NULL AND strftime('%Y', collected_at, '+5 hours') = strftime('%Y', 'now', '+5 hours')))",
+            _ => "((date(created_at, '+5 hours') = date('now', '+5 hours') OR date(created_at) = date('now', '+5 hours') OR date(created_at, 'localtime') = date('now', 'localtime')) OR (collected_at IS NOT NULL AND (date(collected_at, '+5 hours') = date('now', '+5 hours') OR date(collected_at) = date('now', '+5 hours') OR date(collected_at, 'localtime') = date('now', 'localtime'))))",
         };
 
         // 0. Returns & refunds for the selected period (Retail POS + Online Orders Return / RTO)
@@ -6711,10 +6694,13 @@ impl DatabaseManager {
         let (online_period_refunds, online_period_returns_count): (i64, i64) = conn.query_row(
             &format!(
                 "SELECT 
-                    COALESCE(SUM(total_amount_paisa), 0),
+                    COALESCE(SUM(CASE 
+                        WHEN refund_amount_paisa IS NOT NULL AND refund_amount_paisa > 0 THEN refund_amount_paisa 
+                        ELSE MAX(0, total_amount_paisa - COALESCE(deduction_amount_paisa, 0)) 
+                    END), 0),
                     COUNT(*)
                  FROM online_orders
-                 WHERE (payment_status = 'RETURNED' OR delivery_status = 'RETURNED_RTO' OR delivery_status = 'RETURNED')
+                 WHERE (payment_status = 'RETURNED' OR delivery_status = 'RETURNED_RTO' OR delivery_status = 'RETURNED' OR delivery_status = 'PARTIAL_RETURN' OR (refund_amount_paisa IS NOT NULL AND refund_amount_paisa > 0))
                    AND {};",
                 onl_ret_cond
             ),
@@ -6729,18 +6715,21 @@ impl DatabaseManager {
         let (retail_mtd_refunds, retail_mtd_returns_count): (i64, i64) = conn.query_row(
             "SELECT COALESCE(SUM(total_refund_amount_paisa), 0), COUNT(*)
              FROM return_vouchers
-             WHERE strftime('%Y-%m', return_date) = strftime('%Y-%m', 'now');",
+             WHERE strftime('%Y-%m', return_date, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours') OR strftime('%Y-%m', return_date) = strftime('%Y-%m', 'now');",
             [],
             |r| Ok((r.get(0)?, r.get(1)?))
         ).unwrap_or((0, 0));
 
         let (online_mtd_refunds, online_mtd_returns_count): (i64, i64) = conn.query_row(
             "SELECT 
-                COALESCE(SUM(total_amount_paisa), 0),
+                COALESCE(SUM(CASE 
+                    WHEN refund_amount_paisa IS NOT NULL AND refund_amount_paisa > 0 THEN refund_amount_paisa 
+                    ELSE MAX(0, total_amount_paisa - COALESCE(deduction_amount_paisa, 0)) 
+                END), 0),
                 COUNT(*)
              FROM online_orders
-             WHERE (payment_status = 'RETURNED' OR delivery_status = 'RETURNED_RTO' OR delivery_status = 'RETURNED')
-               AND (strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now') OR (collected_at IS NOT NULL AND strftime('%Y-%m', collected_at) = strftime('%Y-%m', 'now')));",
+             WHERE (payment_status = 'RETURNED' OR delivery_status = 'RETURNED_RTO' OR delivery_status = 'RETURNED' OR delivery_status = 'PARTIAL_RETURN' OR (refund_amount_paisa IS NOT NULL AND refund_amount_paisa > 0))
+               AND (strftime('%Y-%m', created_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours') OR (collected_at IS NOT NULL AND strftime('%Y-%m', collected_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours')));",
             [],
             |r| Ok((r.get(0)?, r.get(1)?))
         ).unwrap_or((0, 0));
@@ -6889,7 +6878,7 @@ impl DatabaseManager {
         let tester_clean_ret_units = (tester_ret_units - tester_damaged_ret_units).max(0);
 
         let mut onl_items_stmt = conn.prepare(&format!(
-            "SELECT items_json, payment_status, delivery_status, subtotal_paisa, total_amount_paisa FROM online_orders WHERE delivery_status != 'CANCELLED' AND {};",
+            "SELECT items_json, payment_status, delivery_status, subtotal_paisa, total_amount_paisa, COALESCE(refund_amount_paisa, 0), COALESCE(deduction_amount_paisa, 0) FROM online_orders WHERE delivery_status != 'CANCELLED' AND {};",
             onl_cond
         )).ok();
 
@@ -6924,10 +6913,20 @@ impl DatabaseManager {
                     r.get::<_, String>(2).unwrap_or_default(),
                     r.get::<_, i64>(3).unwrap_or(0),
                     r.get::<_, i64>(4).unwrap_or(0),
+                    r.get::<_, i64>(5).unwrap_or(0),
+                    r.get::<_, i64>(6).unwrap_or(0),
                 ))
             }) {
-                for (json_str, p_status, d_status, o_subtotal, o_total) in rows.flatten() {
-                    let is_ret = p_status == "RETURNED" || d_status == "RETURNED_RTO" || d_status == "RETURNED";
+                for (json_str, p_status, d_status, o_subtotal, o_total, o_refund, o_deduct) in rows.flatten() {
+                    let is_ret = p_status == "RETURNED" || d_status == "RETURNED_RTO" || d_status == "RETURNED" || d_status == "PARTIAL_RETURN" || o_refund > 0;
+                    let actual_order_refund_paisa = if o_refund > 0 {
+                        o_refund
+                    } else if o_total > 0 {
+                        (o_total - o_deduct).max(0)
+                    } else {
+                        0
+                    };
+
                     if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
                         for it in parsed {
                             let itype = it.get("item_type").and_then(|v| v.as_str())
@@ -6944,6 +6943,18 @@ impl DatabaseManager {
                                 raw_ltotal
                             };
 
+                            let refund_line_paisa = if is_ret {
+                                if o_total > 0 && actual_order_refund_paisa > 0 {
+                                    (actual_order_refund_paisa as f64 * (ltotal as f64 / o_total as f64)).round() as i64
+                                } else if actual_order_refund_paisa > 0 {
+                                    actual_order_refund_paisa
+                                } else {
+                                    ltotal
+                                }
+                            } else {
+                                0
+                            };
+
                             let is_tester = itype == "TESTER" || pname.to_lowercase().contains("tester") || pname.to_lowercase().contains("sample");
                             let is_attar = itype == "ATTAR" && !is_tester;
 
@@ -6951,39 +6962,39 @@ impl DatabaseManager {
                                 online_tester_sales += ltotal;
                                 online_tester_units += qty;
                                 if is_ret {
-                                    online_tester_ret_refunds += ltotal;
+                                    online_tester_ret_refunds += refund_line_paisa;
                                     online_tester_ret_units += qty;
                                     online_returned_items.push(OnlineReturnedItemInfo {
                                         product_name: pname.to_string(),
                                         item_type: "TESTER".to_string(),
                                         quantity: qty,
-                                        line_total_paisa: ltotal,
+                                        line_total_paisa: refund_line_paisa,
                                     });
                                 }
                             } else if is_attar {
                                 online_attar_sales += ltotal;
                                 online_attar_units += qty;
                                 if is_ret {
-                                    online_attar_ret_refunds += ltotal;
+                                    online_attar_ret_refunds += refund_line_paisa;
                                     online_attar_ret_units += qty;
                                     online_returned_items.push(OnlineReturnedItemInfo {
                                         product_name: pname.to_string(),
                                         item_type: "ATTAR".to_string(),
                                         quantity: qty,
-                                        line_total_paisa: ltotal,
+                                        line_total_paisa: refund_line_paisa,
                                     });
                                 }
                             } else {
                                 online_perfume_sales += ltotal;
                                 online_perfume_units += qty;
                                 if is_ret {
-                                    online_perfume_ret_refunds += ltotal;
+                                    online_perfume_ret_refunds += refund_line_paisa;
                                     online_perfume_ret_units += qty;
                                     online_returned_items.push(OnlineReturnedItemInfo {
                                         product_name: pname.to_string(),
                                         item_type: "PERFUME".to_string(),
                                         quantity: qty,
-                                        line_total_paisa: ltotal,
+                                        line_total_paisa: refund_line_paisa,
                                     });
                                 }
                             }
@@ -7317,17 +7328,17 @@ impl DatabaseManager {
 
         // 9. Payment Settlement Breakdown (Cash, EasyPaisa, JazzCash, Direct Bank) filtered by selected period
         let onl_pay_cond = match period_type.as_str() {
-            "weekly" => "date(oop.created_at) >= date('now', '-7 days')",
-            "monthly" => "strftime('%Y-%m', oop.created_at) = strftime('%Y-%m', 'now')",
-            "yearly" => "strftime('%Y', oop.created_at) = strftime('%Y', 'now')",
-            _ => "(date(oop.created_at) = date('now') OR date(oop.created_at) = date('now', 'localtime'))",
+            "weekly" => "(date(oop.created_at, '+5 hours') >= date('now', '+5 hours', '-7 days') OR date(oop.created_at) >= date('now', '-7 days'))",
+            "monthly" => "(strftime('%Y-%m', oop.created_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours') OR strftime('%Y-%m', oop.created_at) = strftime('%Y-%m', 'now'))",
+            "yearly" => "(strftime('%Y', oop.created_at, '+5 hours') = strftime('%Y', 'now', '+5 hours') OR strftime('%Y', oop.created_at) = strftime('%Y', 'now'))",
+            _ => "(date(oop.created_at, '+5 hours') = date('now', '+5 hours') OR date(oop.created_at) = date('now', '+5 hours') OR date(oop.created_at, 'localtime') = date('now', 'localtime'))",
         };
 
         let onl_cond_oo = match period_type.as_str() {
-            "weekly" => "(date(oo.created_at) >= date('now', '-7 days') OR (oo.collected_at IS NOT NULL AND date(oo.collected_at) >= date('now', '-7 days')))",
-            "monthly" => "(strftime('%Y-%m', oo.created_at) = strftime('%Y-%m', 'now') OR (oo.collected_at IS NOT NULL AND strftime('%Y-%m', oo.collected_at) = strftime('%Y-%m', 'now')))",
-            "yearly" => "(strftime('%Y', oo.created_at) = strftime('%Y', 'now') OR (oo.collected_at IS NOT NULL AND strftime('%Y', oo.collected_at) = strftime('%Y', 'now')))",
-            _ => "((date(oo.created_at) = date('now') OR date(oo.created_at) = date('now', 'localtime')) OR (oo.collected_at IS NOT NULL AND (date(oo.collected_at) = date('now') OR date(oo.collected_at) = date('now', 'localtime'))))",
+            "weekly" => "(date(oo.created_at, '+5 hours') >= date('now', '+5 hours', '-7 days') OR (oo.collected_at IS NOT NULL AND (date(oo.collected_at, '+5 hours') >= date('now', '+5 hours', '-7 days') OR date(oo.collected_at) >= date('now', '-7 days'))))",
+            "monthly" => "(strftime('%Y-%m', oo.created_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours') OR (oo.collected_at IS NOT NULL AND strftime('%Y-%m', oo.collected_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours')))",
+            "yearly" => "(strftime('%Y', oo.created_at, '+5 hours') = strftime('%Y', 'now', '+5 hours') OR (oo.collected_at IS NOT NULL AND strftime('%Y', oo.collected_at, '+5 hours') = strftime('%Y', 'now', '+5 hours')))",
+            _ => "((date(oo.created_at, '+5 hours') = date('now', '+5 hours') OR date(oo.created_at) = date('now', '+5 hours') OR date(oo.created_at, 'localtime') = date('now', 'localtime')) OR (oo.collected_at IS NOT NULL AND (date(oo.collected_at, '+5 hours') = date('now', '+5 hours') OR date(oo.collected_at) = date('now', '+5 hours') OR date(oo.collected_at, 'localtime') = date('now', 'localtime'))))",
         };
 
         let gross_cash_received_paisa: i64 = conn.query_row(

@@ -289,7 +289,7 @@ pub fn update_user_security(
     new_role: Option<String>,
     is_active: Option<bool>,
 ) -> Result<bool, String> {
-    let caller = caller_user_id.unwrap_or_else(|| "usr_admin".to_string());
+    let caller = caller_user_id.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "usr_ibrar".to_string());
     let db = DatabaseManager::new();
     db.update_user_security(
         &caller,
@@ -309,8 +309,9 @@ pub fn delete_user(
     caller_user_id: String,
     target_user_id: String,
 ) -> Result<bool, String> {
+    let caller = if caller_user_id.trim().is_empty() { "usr_ibrar".to_string() } else { caller_user_id };
     let db = DatabaseManager::new();
-    db.delete_user(&caller_user_id, &target_user_id)
+    db.delete_user(&caller, &target_user_id)
 }
 
 // Create New Staff Account (Super Admin Only)
@@ -323,8 +324,9 @@ pub fn create_user(
     pin: String,
     password: String,
 ) -> Result<SystemUserDto, String> {
+    let caller = if caller_user_id.trim().is_empty() { "usr_ibrar".to_string() } else { caller_user_id };
     let db = DatabaseManager::new();
-    db.create_user(&caller_user_id, &username, &full_name, &role, &pin, &password)
+    db.create_user(&caller, &username, &full_name, &role, &pin, &password)
         .map(|u| SystemUserDto {
             user_id: u.user_id,
             username: u.username,

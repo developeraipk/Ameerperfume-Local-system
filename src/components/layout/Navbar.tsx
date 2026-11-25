@@ -116,26 +116,9 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const renderFormattedName = (fullName: string) => {
     const cleanName = fullName.replace(/\s*\([^)]*\)/g, "").trim();
-    const words = cleanName.split(/\s+/).filter(Boolean);
-    if (words.length <= 1) {
-      return (
-        <div className="font-bold text-slate-900 dark:text-slate-100 text-[11.5px] leading-tight truncate max-w-[95px]" title={cleanName}>
-          {cleanName}
-        </div>
-      );
-    }
-    const firstLine = words.slice(0, 2).join(" ");
-    const remainingLine = words.slice(2).join(" ");
     return (
-      <div className="flex flex-col leading-tight max-w-[95px]" title={cleanName}>
-        <span className="font-bold text-slate-900 dark:text-slate-100 text-[11.5px] truncate">
-          {firstLine}
-        </span>
-        {remainingLine && (
-          <span className="text-[9.5px] font-semibold text-slate-500 dark:text-slate-400 truncate">
-            {remainingLine}
-          </span>
-        )}
+      <div className="font-bold text-slate-900 dark:text-slate-100 text-xs leading-tight truncate max-w-[130px] whitespace-nowrap" title={cleanName}>
+        {cleanName}
       </div>
     );
   };

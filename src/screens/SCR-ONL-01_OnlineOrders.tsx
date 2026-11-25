@@ -23,6 +23,7 @@ import { PromotionalOffer } from "@/types/offers";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { getPKTDate, parseDateToPKT } from "@/lib/date-utils";
 import {
   Globe,
   MessageSquare,
@@ -68,6 +69,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
 
   // Filters & Search
   const [filterTab, setFilterTab] = useState<ChannelFilter>("ALL");
+  const [periodFilter, setPeriodFilter] = useState<"ALL" | "TODAY" | "WEEK" | "MONTH">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
 
   // Pagination State (Show latest 10 by default)
@@ -77,7 +79,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   // Reset page when filter or search changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterTab, searchQuery]);
+  }, [filterTab, periodFilter, searchQuery]);
 
   // Modals state
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
@@ -190,12 +192,36 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     });
   };
 
-  // KPI Calculations
-  const waOrders = orders.filter((o) => o.channel === "WHATSAPP");
-  const webOrders = orders.filter((o) => o.channel === "WEBSITE");
+  // Filter Helper based on selected period (Strict Pakistan Local Time UTC+5, 12:00 AM midnight day-end)
+  const filterByPeriod = useMemo(() => {
+    const todayPKT = getPKTDate(new Date());
+    const currentMonthPKT = todayPKT.slice(0, 7);
+    const d7 = new Date();
+    d7.setDate(d7.getDate() - 7);
+    const weekAgoPKT = getPKTDate(d7);
+
+    return (dateStr?: string) => {
+      if (!dateStr || periodFilter === "ALL") return true;
+      const recordPKT = parseDateToPKT(dateStr);
+      if (!recordPKT) return true;
+      if (periodFilter === "TODAY") return recordPKT === todayPKT;
+      if (periodFilter === "WEEK") return recordPKT >= weekAgoPKT && recordPKT <= todayPKT;
+      if (periodFilter === "MONTH") return recordPKT.startsWith(currentMonthPKT);
+      return true;
+    };
+  }, [periodFilter]);
+
+  // Orders filtered by period for accurate KPIs and reporting
+  const periodFilteredOrders = useMemo(() => {
+    return orders.filter((o) => filterByPeriod(o.created_at));
+  }, [orders, filterByPeriod]);
+
+  // KPI Calculations (Scoped to the active periodFilter)
+  const waOrders = periodFilteredOrders.filter((o) => o.channel === "WHATSAPP");
+  const webOrders = periodFilteredOrders.filter((o) => o.channel === "WEBSITE");
 
   // Total Gross Order Value
-  const totalGrossOrderValuePaisa = orders.reduce((sum, o) => sum + o.total_amount_paisa, 0);
+  const totalGrossOrderValuePaisa = periodFilteredOrders.reduce((sum, o) => sum + o.total_amount_paisa, 0);
   const waGrossOrderValuePaisa = waOrders.reduce((sum, o) => sum + o.total_amount_paisa, 0);
   const webGrossOrderValuePaisa = webOrders.reduce((sum, o) => sum + o.total_amount_paisa, 0);
 
@@ -228,15 +254,15 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const totalCollectedPaisa = waCollectedPaisa + webCollectedPaisa;
 
   // Custodian split of pending money
-  const courierCodPaisa = orders
+  const courierCodPaisa = periodFilteredOrders
     .filter((o) => o.payment_custodian === "COURIER" && o.payment_status !== "RETURNED")
     .reduce((sum, o) => sum + o.cod_balance_paisa, 0);
 
-  const staffPendingPaisa = orders
+  const staffPendingPaisa = periodFilteredOrders
     .filter((o) => o.payment_custodian === "STAFF_HANDLER" && o.payment_status !== "RETURNED")
     .reduce((sum, o) => sum + o.cod_balance_paisa, 0);
 
-  const waStaffPendingPaisa = orders
+  const waStaffPendingPaisa = periodFilteredOrders
     .filter(
       (o) =>
         o.channel === "WHATSAPP" &&
@@ -245,7 +271,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     )
     .reduce((sum, o) => sum + o.cod_balance_paisa, 0);
 
-  const webStaffPendingPaisa = orders
+  const webStaffPendingPaisa = periodFilteredOrders
     .filter(
       (o) =>
         o.channel === "WEBSITE" &&
@@ -254,15 +280,15 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     )
     .reduce((sum, o) => sum + o.cod_balance_paisa, 0);
 
-  const returnedOrders = orders.filter(
+  const returnedOrders = periodFilteredOrders.filter(
     (o) => o.delivery_status === "RETURNED_RTO" || o.payment_status === "RETURNED"
   );
   const totalReturnedValuePaisa = returnedOrders.reduce((sum, o) => sum + o.total_amount_paisa, 0);
   const totalRefundedPaisa = returnedOrders.reduce((sum, o) => sum + (o.refund_amount_paisa || 0), 0);
 
-  // Filtering
+  // Filtering for table display
   const filteredOrders = useMemo(() => {
-    return orders.filter((o) => {
+    return periodFilteredOrders.filter((o) => {
       // Channel / Status filter
       if (filterTab === "WHATSAPP" && o.channel !== "WHATSAPP") return false;
       if (filterTab === "WEBSITE" && o.channel !== "WEBSITE") return false;
@@ -283,7 +309,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
         (o.tracking_number && o.tracking_number.toLowerCase().includes(q))
       );
     });
-  }, [orders, filterTab, searchQuery]);
+  }, [periodFilteredOrders, filterTab, searchQuery]);
 
   // Pagination Slice (10 items per page)
   const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
@@ -1341,14 +1367,34 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
           })}
         </div>
 
-        <div className="w-full sm:w-80">
-          <Input
-            placeholder="Search order #, customer phone, name, city, courier..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            icon={<Search className="w-4 h-4 text-emerald-500" />}
-            className="h-9 text-xs"
-          />
+        <div className="flex items-center gap-2.5 w-full sm:w-auto">
+          {/* Period Filter Dropdown */}
+          <div className="flex items-center bg-white dark:bg-slate-900 px-2.5 py-1 rounded-xl border border-slate-300 dark:border-slate-700 shadow-2xs hover:border-amber-500/50 transition-colors h-9 shrink-0">
+            <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0 mr-1.5" />
+            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mr-1.5 font-mono">
+              Period:
+            </span>
+            <select
+              value={periodFilter}
+              onChange={(e) => setPeriodFilter(e.target.value as any)}
+              className="bg-transparent text-slate-900 dark:text-slate-100 font-bold text-xs outline-none cursor-pointer pr-1"
+            >
+              <option value="ALL" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">All Records (Lifetime)</option>
+              <option value="TODAY" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">Daily (Today)</option>
+              <option value="WEEK" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">Last 7 Days (Week)</option>
+              <option value="MONTH" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">This Month (MTD)</option>
+            </select>
+          </div>
+
+          <div className="w-full sm:w-72">
+            <Input
+              placeholder="Search order #, customer phone, name, city, courier..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              icon={<Search className="w-4 h-4 text-emerald-500" />}
+              className="h-9 text-xs"
+            />
+          </div>
         </div>
       </div>
 
@@ -2331,8 +2377,8 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       {/* ========================================================================= */}
       {isCollectModalOpen && selectedOrder && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950 shrink-0">
               <div className="flex items-center gap-2">
                 <DollarSign className="w-5 h-5 text-emerald-500" />
                 <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
@@ -2347,7 +2393,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
               </button>
             </div>
 
-            <form onSubmit={handleExecuteCollectPayment} className="p-5 space-y-4 text-xs">
+            <form onSubmit={handleExecuteCollectPayment} className="p-5 space-y-4 text-xs overflow-y-auto flex-1">
               <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-1 font-mono">
                 <div className="flex justify-between">
                   <span className="text-slate-500 font-sans">Total Order Value:</span>
@@ -2443,8 +2489,8 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       {/* ========================================================================= */}
       {isReturnModalOpen && selectedOrder && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-rose-500/10">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-lg max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-rose-500/10 shrink-0">
               <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
                 <RotateCcw className="w-5 h-5" />
                 <h2 className="text-sm font-bold">
@@ -2459,7 +2505,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
               </button>
             </div>
 
-            <form onSubmit={handleExecuteReturn} className="p-5 space-y-4 text-xs">
+            <form onSubmit={handleExecuteReturn} className="p-5 space-y-4 text-xs overflow-y-auto flex-1">
               <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-700 dark:text-rose-300">
                 <p className="font-semibold mb-1">⚠️ Return & Restock Action:</p>
                 <ul className="list-disc pl-4 space-y-0.5 text-[11px]">
@@ -2726,8 +2772,8 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
       {/* ========================================================================= */}
       {isStatusModalOpen && selectedOrder && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950 shrink-0">
               <div className="flex items-center gap-2">
                 <Truck className="w-5 h-5 text-indigo-500" />
                 <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
@@ -2742,7 +2788,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
               </button>
             </div>
 
-            <form onSubmit={handleExecuteStatusUpdate} className="p-5 space-y-4 text-xs">
+            <form onSubmit={handleExecuteStatusUpdate} className="p-5 space-y-4 text-xs overflow-y-auto flex-1">
               <div>
                 <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
                   Delivery Status

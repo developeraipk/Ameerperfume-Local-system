@@ -32,6 +32,7 @@ import {
   exportExpensesToCSV,
   exportAllTablesToSingleCSV,
 } from "@/lib/export-utils";
+import { getPKTDate, parseDateToPKT } from "@/lib/date-utils";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import {
@@ -135,26 +136,33 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
     return () => window.removeEventListener("app:refresh-data", handleGlobalRefresh);
   }, []);
 
-  // Filter Helper based on selected period
+  // Filter Helper based on selected period (Strict Pakistan Local Time UTC+5, 12:00 AM Midnight Day-end)
   const filterByPeriod = useMemo(() => {
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const todayPKT = getPKTDate(new Date());
+    const currentMonthPKT = todayPKT.slice(0, 7);
+    const currentYearPKT = todayPKT.slice(0, 4);
 
-    const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() - now.getDay());
-    weekStart.setHours(0, 0, 0, 0);
-
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-    const yearStart = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
+    const d7 = new Date();
+    d7.setDate(d7.getDate() - 7);
+    const weekAgoPKT = getPKTDate(d7);
 
     return (dateStr?: string) => {
       if (!dateStr || period === "ALL") return true;
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return true;
-      if (period === "TODAY") return d >= todayStart;
-      if (period === "WEEK") return d >= weekStart;
-      if (period === "MONTH") return d >= monthStart;
-      if (period === "YEAR") return d >= yearStart;
+      const recordPKT = parseDateToPKT(dateStr);
+      if (!recordPKT) return true;
+
+      if (period === "TODAY") {
+        return recordPKT === todayPKT;
+      }
+      if (period === "WEEK") {
+        return recordPKT >= weekAgoPKT && recordPKT <= todayPKT;
+      }
+      if (period === "MONTH") {
+        return recordPKT.startsWith(currentMonthPKT);
+      }
+      if (period === "YEAR") {
+        return recordPKT.startsWith(currentYearPKT);
+      }
       return true;
     };
   }, [period]);
@@ -314,9 +322,16 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
 
   // Online Returns & RTOs:
   const returnedOnlineOrders = filteredOnlineOrders.filter(
-    (o) => o.payment_status === "RETURNED" || o.delivery_status === "RETURNED_RTO"
+    (o) =>
+      o.payment_status === "RETURNED" ||
+      (o.delivery_status as string) === "RETURNED_RTO" ||
+      (o.delivery_status as string) === "PARTIAL_RETURN" ||
+      (typeof o.refund_amount_paisa === "number" && o.refund_amount_paisa > 0)
   );
   const totalOnlineReturnsPaisa = returnedOnlineOrders.reduce((acc, o) => {
+    if (typeof o.refund_amount_paisa === "number" && o.refund_amount_paisa > 0) {
+      return acc + o.refund_amount_paisa;
+    }
     const deduct = o.deduction_amount_paisa || 0;
     return acc + Math.max(0, o.total_amount_paisa - deduct);
   }, 0);
@@ -1619,7 +1634,13 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
             </span>
             <select
               value={channelFilter}
-              onChange={(e) => setChannelFilter(e.target.value as ChannelAuditFilter)}
+              onChange={(e) => {
+                const newCh = e.target.value as ChannelAuditFilter;
+                setChannelFilter(newCh);
+                if (newCh === "POS") setActiveTab("SALES");
+                else if (newCh === "ONLINE") setActiveTab("ONLINE");
+                else if (newCh === "WHOLESALE") setActiveTab("WHOLESALE");
+              }}
               className="bg-transparent text-slate-900 dark:text-slate-100 font-bold text-xs outline-none cursor-pointer pr-1"
             >
               <option value="ALL" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">All Channels</option>

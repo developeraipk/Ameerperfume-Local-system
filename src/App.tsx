@@ -141,7 +141,18 @@ export function App() {
     };
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+
+    const handleUserUpdated = (e: any) => {
+      if (e.detail) {
+        setCurrentUser(e.detail);
+      }
+    };
+    window.addEventListener("app:user-updated", handleUserUpdated);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("app:user-updated", handleUserUpdated);
+    };
   }, []);
 
   const handleAuthenticated = (user: SystemUser) => {

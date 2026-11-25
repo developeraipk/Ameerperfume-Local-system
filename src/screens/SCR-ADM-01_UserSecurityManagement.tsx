@@ -239,6 +239,18 @@ export const UserSecurityManagement: React.FC<UserSecurityManagementProps> = ({ 
         is_active: editingUser.role === "SUPER_ADMIN" ? true : editIsActive,
       });
 
+      if (editingUser.user_id === currentUser?.user_id) {
+        const updatedUser: SystemUser = {
+          ...currentUser,
+          full_name: editFullName.trim(),
+          username: editUsername.trim().toLowerCase(),
+        };
+        try {
+          sessionStorage.setItem("ameer_pos_active_user", JSON.stringify(updatedUser));
+        } catch {}
+        window.dispatchEvent(new CustomEvent("app:user-updated", { detail: updatedUser }));
+      }
+
       setSuccessMsg(`User profile for @${editUsername.trim()} successfully updated!`);
       setEditingUser(null);
       await loadData();

@@ -85,15 +85,16 @@ export const EmployeeSalaries: React.FC<EmployeeSalariesProps> = ({ currentUser 
       setPayouts(payoutsData);
 
       if (dash) {
+        const cashInTill = typeof dash.total_cash_received_paisa === 'number'
+          ? dash.total_cash_received_paisa
+          : (dash.cash_in_drawer_paisa ?? 0);
+        const easyPaisa = dash.total_easypaisa_received_paisa ?? 0;
+        const jazzCash = dash.total_jazzcash_received_paisa ?? 0;
         setTreasuryBalances({
-          cash: dash.all_time_cash_drawer_paisa ?? dash.total_cash_received_paisa ?? dash.cash_in_drawer_paisa ?? 0,
-          easypaisa: dash.all_time_easypaisa_paisa ?? dash.total_easypaisa_received_paisa ?? 0,
-          jazzcash: dash.all_time_jazzcash_paisa ?? dash.total_jazzcash_received_paisa ?? 0,
-          netAvailable: dash.net_available_treasury_paisa ?? (
-            (dash.all_time_cash_drawer_paisa ?? 0) +
-            (dash.all_time_easypaisa_paisa ?? 0) +
-            (dash.all_time_jazzcash_paisa ?? 0)
-          ),
+          cash: cashInTill,
+          easypaisa: easyPaisa,
+          jazzcash: jazzCash,
+          netAvailable: dash.net_available_treasury_paisa ?? Math.max(0, cashInTill + easyPaisa + jazzCash),
         });
       }
 

@@ -146,10 +146,13 @@ export const ReturnManagement: React.FC<ReturnManagementProps> = ({ currentUser,
   const loadBalances = async () => {
     try {
       const dash = await getExecutiveDashboard("today");
+      const cashInTill = typeof dash.total_cash_received_paisa === 'number'
+        ? dash.total_cash_received_paisa
+        : (dash.cash_in_drawer_paisa ?? 0);
       setChannelBalances({
-        cash: dash.all_time_cash_drawer_paisa ?? dash.total_cash_received_paisa ?? dash.cash_in_drawer_paisa ?? 0,
-        easypaisa: dash.all_time_easypaisa_paisa ?? dash.total_easypaisa_received_paisa ?? 0,
-        jazzcash: dash.all_time_jazzcash_paisa ?? dash.total_jazzcash_received_paisa ?? 0,
+        cash: cashInTill,
+        easypaisa: dash.total_easypaisa_received_paisa ?? 0,
+        jazzcash: dash.total_jazzcash_received_paisa ?? 0,
       });
     } catch (err) {
       console.error("Failed to load channel balances:", err);

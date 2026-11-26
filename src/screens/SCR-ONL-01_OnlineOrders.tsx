@@ -149,6 +149,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
   const [refundMode, setRefundMode] = useState<"FULL" | "PARTIAL" | "NONE">("FULL");
   const [refundDeductionRupees, setRefundDeductionRupees] = useState("0");
   const [refundPaymentMethod, setRefundPaymentMethod] = useState("CASH");
+  const [refundDeliveryCharges, setRefundDeliveryCharges] = useState(false);
 
   // Status Update State
   const [updateDeliveryStatus, setUpdateDeliveryStatus] = useState("DISPATCHED");
@@ -786,6 +787,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
     setReturnItemSelections(selections);
 
     const netPaidSoFar = Math.max(0, (order.advance_paid_paisa || 0) - (order.refund_amount_paisa || 0));
+    setRefundDeliveryCharges(false);
     if (netPaidSoFar > 0) {
       setRefundMode("FULL");
       setRefundDeductionRupees("0");
@@ -818,7 +820,11 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
 
     const netPaidSoFar = Math.max(0, (selectedOrder.advance_paid_paisa || 0) - (selectedOrder.refund_amount_paisa || 0));
     const returnedItemsValuePaisa = selectedReturns.reduce((sum, s) => sum + s.returnQty * s.unitPricePaisa, 0);
-    const maxRefundPossible = Math.min(netPaidSoFar, returnedItemsValuePaisa);
+    const deliveryRefundPaisa = (refundDeliveryCharges && (selectedOrder.delivery_charges_paisa || 0) > 0)
+      ? (selectedOrder.delivery_charges_paisa || 0)
+      : 0;
+    const totalRefundablePaisa = returnedItemsValuePaisa + deliveryRefundPaisa;
+    const maxRefundPossible = Math.min(netPaidSoFar, totalRefundablePaisa);
 
     let refundPaisa = 0;
     let deductionPaisa = 0;
@@ -847,7 +853,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
         const totalReturned = (s.rawItem.returned_quantity || 0) + newlyReturned;
         const totalOrdered = s.rawItem.quantity || 1;
         const itemShareOfRefund = (s.selected && returnedItemsValuePaisa > 0 && refundPaisa > 0)
-          ? Math.round(refundPaisa * ((s.returnQty * s.unitPricePaisa) / returnedItemsValuePaisa))
+          ? Math.round(Math.min(refundPaisa, returnedItemsValuePaisa) * ((s.returnQty * s.unitPricePaisa) / returnedItemsValuePaisa))
           : 0;
         const prevItemRefund = s.rawItem.refund_paisa || 0;
 
@@ -866,7 +872,7 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
 
       const returnedItems = selectedReturns.map((s) => {
         const itemRefund = returnedItemsValuePaisa > 0 && refundPaisa > 0
-          ? Math.round(refundPaisa * ((s.returnQty * s.unitPricePaisa) / returnedItemsValuePaisa))
+          ? Math.round(Math.min(refundPaisa, returnedItemsValuePaisa) * ((s.returnQty * s.unitPricePaisa) / returnedItemsValuePaisa))
           : 0;
         return {
           ...s.rawItem,
@@ -895,11 +901,15 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
             return sum + activeItemDisc;
           }, 0);
 
+      const remainingDeliveryCharges = isAllReturned || refundDeliveryCharges
+        ? 0
+        : (selectedOrder.delivery_charges_paisa || 0);
+
       const newTotalPaisa = isAllReturned
         ? 0
         : Math.max(
             0,
-            activeItemsSubtotalPaisa + (isAllReturned ? 0 : selectedOrder.delivery_charges_paisa) - activeItemsDiscountPaisa
+            activeItemsSubtotalPaisa + remainingDeliveryCharges - activeItemsDiscountPaisa
           );
 
       const payload: MarkOnlineReturnPayload = {
@@ -2868,12 +2878,44 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                 </div>
               </div>
 
+              {/* Delivery Charges Refund Option (Admin Choice) */}
+              {(selectedOrder.delivery_charges_paisa || 0) > 0 && (
+                <div className="p-3 bg-amber-500/10 dark:bg-amber-950/25 border border-amber-500/30 rounded-xl flex items-center justify-between">
+                  <label className="flex items-center gap-2.5 cursor-pointer select-none flex-1">
+                    <input
+                      type="checkbox"
+                      checked={refundDeliveryCharges}
+                      onChange={(e) => setRefundDeliveryCharges(e.target.checked)}
+                      className="w-4 h-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                    />
+                    <div>
+                      <div className="font-bold text-xs text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                        <Truck className="w-3.5 h-3.5" />
+                        Refund Delivery Charges (Rs. {formatRs(selectedOrder.delivery_charges_paisa)})?
+                      </div>
+                      <div className="text-[10px] text-amber-700 dark:text-amber-400">
+                        {refundDeliveryCharges
+                          ? "✓ Delivery charges will be added to customer refund"
+                          : "✗ Delivery charges retained by shop (not refunded)"}
+                      </div>
+                    </div>
+                  </label>
+                  <span className="font-mono font-bold text-xs text-amber-700 dark:text-amber-300">
+                    Rs. {formatRs(selectedOrder.delivery_charges_paisa)}
+                  </span>
+                </div>
+              )}
+
               {/* Advance Paid & Refund Settlement Options */}
               {(() => {
                 const selectedItems = returnItemSelections.filter((it) => it.selected && it.returnQty > 0);
                 const returnedValPaisa = selectedItems.reduce((sum, s) => sum + s.returnQty * s.unitPricePaisa, 0);
+                const deliveryRefundPaisa = (refundDeliveryCharges && (selectedOrder.delivery_charges_paisa || 0) > 0)
+                  ? (selectedOrder.delivery_charges_paisa || 0)
+                  : 0;
+                const totalRefundablePaisa = returnedValPaisa + deliveryRefundPaisa;
                 const netPaidSoFar = Math.max(0, (selectedOrder.advance_paid_paisa || 0) - (selectedOrder.refund_amount_paisa || 0));
-                const maxRefundEligible = Math.min(netPaidSoFar, returnedValPaisa);
+                const maxRefundEligible = Math.min(netPaidSoFar, totalRefundablePaisa);
                 const deductionInputPaisa = Math.max(0, Math.round((parseFloat(refundDeductionRupees) || 0) * 100));
                 const deductionCut = Math.min(maxRefundEligible, deductionInputPaisa);
                 const calculatedRefundPaisa =
@@ -2886,14 +2928,14 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                 if (netPaidSoFar <= 0) {
                   return (
                     <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-400">
-                      ℹ️ No customer advance paid / payment recorded. Returned items value (Rs. {formatRs(returnedValPaisa)}) will reduce pending COD receivable. No cash refund required.
+                      ℹ️ No customer advance paid / payment recorded. Returned value (Rs. {formatRs(totalRefundablePaisa)}) will reduce pending COD receivable. No cash refund required.
                     </div>
                   );
                 }
 
                 return (
                   <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3 font-sans">
-                    <div className="grid grid-cols-2 gap-2 text-xs border-b border-slate-200 dark:border-slate-800/80 pb-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs border-b border-slate-200 dark:border-slate-800/80 pb-2">
                       <div>
                         <span className="text-slate-500 block text-[10px]">Net Collected from Customer:</span>
                         <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
@@ -2901,9 +2943,16 @@ export const OnlineOrders: React.FC<OnlineOrdersProps> = ({ currentUser }) => {
                         </span>
                       </div>
                       <div>
-                        <span className="text-slate-500 block text-[10px]">Value of Selected Returns:</span>
+                        <span className="text-slate-500 block text-[10px]">Value of Returned Items:</span>
                         <span className="font-mono font-bold text-rose-600 dark:text-rose-400">
                           Rs. {formatRs(returnedValPaisa)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block text-[10px]">Total Refundable Eligible:</span>
+                        <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
+                          Rs. {formatRs(totalRefundablePaisa)}
+                          {deliveryRefundPaisa > 0 && <span className="text-[9px] block text-blue-500 font-normal">(+Rs. {formatRs(deliveryRefundPaisa)} delivery)</span>}
                         </span>
                       </div>
                     </div>

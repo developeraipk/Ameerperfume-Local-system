@@ -7377,12 +7377,25 @@ impl DatabaseManager {
 
         let total_inv = fg_val + rm_val;
 
-        // 4. Receivables & Liabilities
-        let receivables: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(current_balance_paisa), 0) FROM wholesale_customers WHERE is_active = 1;",
-            [],
-            |r| r.get(0)
-        ).unwrap_or(0);
+        // 4. Receivables & Liabilities (Filtered by selected period, or all-time if period is 'all')
+        let receivables: i64 = if period_type == "all" {
+            conn.query_row(
+                "SELECT COALESCE(SUM(current_balance_paisa), 0) FROM wholesale_customers WHERE is_active = 1;",
+                [],
+                |r| r.get(0)
+            ).unwrap_or(0)
+        } else {
+            conn.query_row(
+                &format!(
+                    "SELECT COALESCE(SUM(balance_due_paisa), 0)
+                     FROM wholesale_invoices wi
+                     WHERE is_voided = 0 AND balance_due_paisa > 0 AND {};",
+                    wi_cond_wi
+                ),
+                [],
+                |r| r.get(0)
+            ).unwrap_or(0)
+        };
 
         let store_credit: i64 = conn.query_row(
             "SELECT COALESCE(SUM(current_credit_balance_paisa), 0) FROM customer_store_credits;",
@@ -7899,11 +7912,22 @@ impl DatabaseManager {
         let all_time_easypaisa_paisa = (all_time_gross_ep - all_time_ep_refunds).max(0);
         let all_time_jazzcash_paisa = (all_time_gross_jc - all_time_jc_refunds).max(0);
 
-        let (total_online_pending_paisa, online_pending_orders_count): (i64, i64) = conn.query_row(
-            "SELECT COALESCE(SUM(cod_balance_paisa), 0), COUNT(*) FROM online_orders WHERE payment_status NOT IN ('PAID', 'RETURNED') AND cod_balance_paisa > 0;",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?))
-        ).unwrap_or((0, 0));
+        let (total_online_pending_paisa, online_pending_orders_count): (i64, i64) = if period_type == "all" {
+            conn.query_row(
+                "SELECT COALESCE(SUM(cod_balance_paisa), 0), COUNT(*) FROM online_orders WHERE payment_status NOT IN ('PAID', 'RETURNED') AND cod_balance_paisa > 0;",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?))
+            ).unwrap_or((0, 0))
+        } else {
+            conn.query_row(
+                &format!(
+                    "SELECT COALESCE(SUM(cod_balance_paisa), 0), COUNT(*) FROM online_orders WHERE payment_status NOT IN ('PAID', 'RETURNED') AND cod_balance_paisa > 0 AND {};",
+                    onl_cond
+                ),
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?))
+            ).unwrap_or((0, 0))
+        };
 
         let total_online_collected_paisa: i64 = conn.query_row(
             "SELECT COALESCE(SUM(collected), 0) FROM (

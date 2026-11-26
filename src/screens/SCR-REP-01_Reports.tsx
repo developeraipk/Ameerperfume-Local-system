@@ -288,7 +288,7 @@ export const Reports: React.FC<ReportsProps> = ({ currentUser }) => {
   const totalWholesalePaidPaisa = filteredWholesaleInvoices.reduce((acc, w) => acc + w.paid_amount_paisa, 0);
   const totalWholesaleUdarPaisa = filteredWholesaleInvoices.reduce((acc, w) => acc + w.balance_due_paisa, 0);
   const totalAllCustomersUdarPaisa = wholesaleCustomers.reduce((acc, c) => acc + (c.current_balance_paisa || 0), 0);
-  const totalPendingUdarToDisplay = totalWholesaleUdarPaisa > 0 ? totalWholesaleUdarPaisa : totalAllCustomersUdarPaisa;
+  const totalPendingUdarToDisplay = period === "ALL" ? (totalWholesaleUdarPaisa > 0 ? totalWholesaleUdarPaisa : totalAllCustomersUdarPaisa) : totalWholesaleUdarPaisa;
   const totalWholesaleDiscountsPaisa = 0;
   const totalWholesaleDiscountedCount = 0;
   const totalWholesaleUnits = filteredWholesaleInvoices.length;

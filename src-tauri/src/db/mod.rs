@@ -6712,71 +6712,43 @@ impl DatabaseManager {
         let conn = self.get_connection().map_err(|e| e.to_string())?;
 
         let period_type = period.as_deref().unwrap_or("today").to_lowercase();
-        let (inv_cond_no_alias, inv_cond_si, ret_cond_no_alias, ret_cond_rv, wi_cond_wi, sal_cond, exp_cond, wp_cond_wp) = match period_type.as_str() {
-            "weekly" => (
-                "date(invoice_date) >= date('now', '-6 days')",
-                "date(si.invoice_date) >= date('now', '-6 days')",
-                "date(return_date) >= date('now', '-6 days')",
-                "date(rv.return_date) >= date('now', '-6 days')",
-                "date(wi.invoice_date) >= date('now', '-6 days')",
-                "date(COALESCE(payout_date, created_at)) >= date('now', '-6 days')",
-                "date(expense_date) >= date('now', '-6 days')",
-                "date(wp.payment_date) >= date('now', '-6 days')",
-            ),
-            "monthly" => (
-                "strftime('%Y-%m', invoice_date) = strftime('%Y-%m', 'now')",
-                "strftime('%Y-%m', si.invoice_date) = strftime('%Y-%m', 'now')",
-                "strftime('%Y-%m', return_date) = strftime('%Y-%m', 'now')",
-                "strftime('%Y-%m', rv.return_date) = strftime('%Y-%m', 'now')",
-                "strftime('%Y-%m', wi.invoice_date) = strftime('%Y-%m', 'now')",
-                "strftime('%Y-%m', COALESCE(payout_date, created_at)) = strftime('%Y-%m', 'now')",
-                "strftime('%Y-%m', expense_date) = strftime('%Y-%m', 'now')",
-                "strftime('%Y-%m', wp.payment_date) = strftime('%Y-%m', 'now')",
-            ),
-            "yearly" => (
-                "strftime('%Y', invoice_date) = strftime('%Y', 'now')",
-                "strftime('%Y', si.invoice_date) = strftime('%Y', 'now')",
-                "strftime('%Y', return_date) = strftime('%Y', 'now')",
-                "strftime('%Y', rv.return_date) = strftime('%Y', 'now')",
-                "strftime('%Y', wi.invoice_date) = strftime('%Y', 'now')",
-                "strftime('%Y', COALESCE(payout_date, created_at)) = strftime('%Y', 'now')",
-                "strftime('%Y', expense_date) = strftime('%Y', 'now')",
-                "strftime('%Y', wp.payment_date) = strftime('%Y', 'now')",
-            ),
-            "all" => (
-                "1=1",
-                "1=1",
-                "1=1",
-                "1=1",
-                "1=1",
-                "1=1",
-                "1=1",
-                "1=1",
-            ),
-            _ => (
-                "(date(invoice_date, '+5 hours') = date('now', '+5 hours') OR date(invoice_date) = date('now', '+5 hours') OR date(invoice_date, 'localtime') = date('now', 'localtime'))",
-                "(date(si.invoice_date, '+5 hours') = date('now', '+5 hours') OR date(si.invoice_date) = date('now', '+5 hours') OR date(si.invoice_date, 'localtime') = date('now', 'localtime'))",
-                "(date(return_date, '+5 hours') = date('now', '+5 hours') OR date(return_date) = date('now', '+5 hours') OR date(return_date, 'localtime') = date('now', 'localtime'))",
-                "(date(rv.return_date, '+5 hours') = date('now', '+5 hours') OR date(rv.return_date) = date('now', '+5 hours') OR date(rv.return_date, 'localtime') = date('now', 'localtime'))",
-                "(date(wi.invoice_date, '+5 hours') = date('now', '+5 hours') OR date(wi.invoice_date) = date('now', '+5 hours') OR date(wi.invoice_date, 'localtime') = date('now', 'localtime'))",
-                "(date(COALESCE(payout_date, created_at), '+5 hours') = date('now', '+5 hours') OR date(COALESCE(payout_date, created_at)) = date('now', '+5 hours') OR date(COALESCE(payout_date, created_at), 'localtime') = date('now', 'localtime'))",
-                "(date(expense_date, '+5 hours') = date('now', '+5 hours') OR date(expense_date) = date('now', '+5 hours') OR date(expense_date, 'localtime') = date('now', 'localtime'))",
-                "(date(wp.payment_date, '+5 hours') = date('now', '+5 hours') OR date(wp.payment_date) = date('now', '+5 hours') OR date(wp.payment_date, 'localtime') = date('now', 'localtime'))",
-            ),
+        let date_filter_sql = |col: &str| -> String {
+            match period_type.as_str() {
+                "weekly" => format!(
+                    "(CASE WHEN {col} LIKE '%T%' OR {col} LIKE '%Z%' OR {col} LIKE '%+%' THEN date({col}, '+5 hours') ELSE date({col}) END) >= date('now', '+5 hours', '-6 days')"
+                ),
+                "monthly" => format!(
+                    "(CASE WHEN {col} LIKE '%T%' OR {col} LIKE '%Z%' OR {col} LIKE '%+%' THEN strftime('%Y-%m', {col}, '+5 hours') ELSE strftime('%Y-%m', {col}) END) = strftime('%Y-%m', 'now', '+5 hours')"
+                ),
+                "yearly" => format!(
+                    "(CASE WHEN {col} LIKE '%T%' OR {col} LIKE '%Z%' OR {col} LIKE '%+%' THEN strftime('%Y', {col}, '+5 hours') ELSE strftime('%Y', {col}) END) = strftime('%Y', 'now', '+5 hours')"
+                ),
+                "all" => "1=1".to_string(),
+                _ => format!(
+                    "(CASE WHEN {col} LIKE '%T%' OR {col} LIKE '%Z%' OR {col} LIKE '%+%' THEN date({col}, '+5 hours') ELSE date({col}) END) = date('now', '+5 hours')"
+                ),
+            }
         };
 
-        let onl_cond = match period_type.as_str() {
-            "weekly" => "(date(created_at, '+5 hours') >= date('now', '+5 hours', '-7 days') OR date(created_at) >= date('now', '-7 days'))",
-            "monthly" => "(strftime('%Y-%m', created_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours') OR strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now'))",
-            "yearly" => "(strftime('%Y', created_at, '+5 hours') = strftime('%Y', 'now', '+5 hours') OR strftime('%Y', created_at) = strftime('%Y', 'now'))",
-            _ => "(date(created_at, '+5 hours') = date('now', '+5 hours') OR date(created_at) = date('now', '+5 hours') OR date(created_at, 'localtime') = date('now', 'localtime'))",
-        };
+        let inv_cond_no_alias = date_filter_sql("invoice_date");
+        let inv_cond_si = date_filter_sql("si.invoice_date");
+        let ret_cond_no_alias = date_filter_sql("return_date");
+        let ret_cond_rv = date_filter_sql("rv.return_date");
+        let wi_cond_wi = date_filter_sql("wi.invoice_date");
+        let sal_cond = date_filter_sql("COALESCE(payout_date, created_at)");
+        let exp_cond = date_filter_sql("expense_date");
+        let wp_cond_wp = date_filter_sql("wp.payment_date");
 
-        let onl_ret_cond = match period_type.as_str() {
-            "weekly" => "(date(created_at, '+5 hours') >= date('now', '+5 hours', '-7 days') OR (collected_at IS NOT NULL AND (date(collected_at, '+5 hours') >= date('now', '+5 hours', '-7 days') OR date(collected_at) >= date('now', '-7 days'))))",
-            "monthly" => "(strftime('%Y-%m', created_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours') OR (collected_at IS NOT NULL AND strftime('%Y-%m', collected_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours')))",
-            "yearly" => "(strftime('%Y', created_at, '+5 hours') = strftime('%Y', 'now', '+5 hours') OR (collected_at IS NOT NULL AND strftime('%Y', collected_at, '+5 hours') = strftime('%Y', 'now', '+5 hours')))",
-            _ => "((date(created_at, '+5 hours') = date('now', '+5 hours') OR date(created_at) = date('now', '+5 hours') OR date(created_at, 'localtime') = date('now', 'localtime')) OR (collected_at IS NOT NULL AND (date(collected_at, '+5 hours') = date('now', '+5 hours') OR date(collected_at) = date('now', '+5 hours') OR date(collected_at, 'localtime') = date('now', 'localtime'))))",
+        let onl_cond = date_filter_sql("created_at");
+
+        let onl_ret_cond = if period_type == "all" {
+            "1=1".to_string()
+        } else {
+            format!(
+                "({} OR (collected_at IS NOT NULL AND {}))",
+                date_filter_sql("created_at"),
+                date_filter_sql("collected_at")
+            )
         };
 
         // 0. Returns & refunds for the selected period (Retail POS + Online Orders Return / RTO)
@@ -6813,23 +6785,31 @@ impl DatabaseManager {
 
         // Returns & refunds MTD (Retail + Online)
         let (retail_mtd_refunds, retail_mtd_returns_count): (i64, i64) = conn.query_row(
-            "SELECT COALESCE(SUM(total_refund_amount_paisa), 0), COUNT(*)
-             FROM return_vouchers
-             WHERE strftime('%Y-%m', return_date, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours') OR strftime('%Y-%m', return_date) = strftime('%Y-%m', 'now');",
+            &format!(
+                "SELECT COALESCE(SUM(total_refund_amount_paisa), 0), COUNT(*)
+                 FROM return_vouchers
+                 WHERE {};",
+                date_filter_sql("return_date")
+            ),
             [],
             |r| Ok((r.get(0)?, r.get(1)?))
         ).unwrap_or((0, 0));
 
         let (online_mtd_refunds, online_mtd_returns_count): (i64, i64) = conn.query_row(
-            "SELECT 
-                COALESCE(SUM(CASE 
-                    WHEN refund_amount_paisa IS NOT NULL AND refund_amount_paisa > 0 THEN refund_amount_paisa 
-                    ELSE MAX(0, total_amount_paisa - COALESCE(deduction_amount_paisa, 0)) 
-                END), 0),
-                COUNT(*)
-             FROM online_orders
-             WHERE (payment_status = 'RETURNED' OR delivery_status = 'RETURNED_RTO' OR delivery_status = 'RETURNED' OR delivery_status = 'PARTIAL_RETURN' OR (refund_amount_paisa IS NOT NULL AND refund_amount_paisa > 0))
-               AND (strftime('%Y-%m', created_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours') OR (collected_at IS NOT NULL AND strftime('%Y-%m', collected_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours')));",
+            &format!(
+                "SELECT 
+                    COALESCE(SUM(CASE 
+                        WHEN refund_amount_paisa IS NOT NULL AND refund_amount_paisa > 0 THEN refund_amount_paisa 
+                        ELSE MAX(0, total_amount_paisa - COALESCE(deduction_amount_paisa, 0)) 
+                    END), 0),
+                    COUNT(*)
+                 FROM online_orders
+                 WHERE (payment_status = 'RETURNED' OR delivery_status = 'RETURNED_RTO' OR delivery_status = 'RETURNED' OR delivery_status = 'PARTIAL_RETURN' OR (refund_amount_paisa IS NOT NULL AND refund_amount_paisa > 0))
+                   AND (
+                       (CASE WHEN created_at LIKE '%T%' OR created_at LIKE '%Z%' OR created_at LIKE '%+%' THEN strftime('%Y-%m', created_at, '+5 hours') ELSE strftime('%Y-%m', created_at) END) = strftime('%Y-%m', 'now', '+5 hours')
+                       OR (collected_at IS NOT NULL AND (CASE WHEN collected_at LIKE '%T%' OR collected_at LIKE '%Z%' OR collected_at LIKE '%+%' THEN strftime('%Y-%m', collected_at, '+5 hours') ELSE strftime('%Y-%m', collected_at) END) = strftime('%Y-%m', 'now', '+5 hours'))
+                   );"
+            ),
             [],
             |r| Ok((r.get(0)?, r.get(1)?))
         ).unwrap_or((0, 0));
@@ -7580,18 +7560,16 @@ impl DatabaseManager {
         }
 
         // 9. Payment Settlement Breakdown (Cash, EasyPaisa, JazzCash, Direct Bank) filtered by selected period
-        let onl_pay_cond = match period_type.as_str() {
-            "weekly" => "(date(oop.created_at, '+5 hours') >= date('now', '+5 hours', '-7 days') OR date(oop.created_at) >= date('now', '-7 days'))",
-            "monthly" => "(strftime('%Y-%m', oop.created_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours') OR strftime('%Y-%m', oop.created_at) = strftime('%Y-%m', 'now'))",
-            "yearly" => "(strftime('%Y', oop.created_at, '+5 hours') = strftime('%Y', 'now', '+5 hours') OR strftime('%Y', oop.created_at) = strftime('%Y', 'now'))",
-            _ => "(date(oop.created_at, '+5 hours') = date('now', '+5 hours') OR date(oop.created_at) = date('now', '+5 hours') OR date(oop.created_at, 'localtime') = date('now', 'localtime'))",
-        };
+        let onl_pay_cond = date_filter_sql("oop.created_at");
 
-        let onl_cond_oo = match period_type.as_str() {
-            "weekly" => "(date(oo.created_at, '+5 hours') >= date('now', '+5 hours', '-7 days') OR (oo.collected_at IS NOT NULL AND (date(oo.collected_at, '+5 hours') >= date('now', '+5 hours', '-7 days') OR date(oo.collected_at) >= date('now', '-7 days'))))",
-            "monthly" => "(strftime('%Y-%m', oo.created_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours') OR (oo.collected_at IS NOT NULL AND strftime('%Y-%m', oo.collected_at, '+5 hours') = strftime('%Y-%m', 'now', '+5 hours')))",
-            "yearly" => "(strftime('%Y', oo.created_at, '+5 hours') = strftime('%Y', 'now', '+5 hours') OR (oo.collected_at IS NOT NULL AND strftime('%Y', oo.collected_at, '+5 hours') = strftime('%Y', 'now', '+5 hours')))",
-            _ => "((date(oo.created_at, '+5 hours') = date('now', '+5 hours') OR date(oo.created_at) = date('now', '+5 hours') OR date(oo.created_at, 'localtime') = date('now', 'localtime')) OR (oo.collected_at IS NOT NULL AND (date(oo.collected_at, '+5 hours') = date('now', '+5 hours') OR date(oo.collected_at) = date('now', '+5 hours') OR date(oo.collected_at, 'localtime') = date('now', 'localtime'))))",
+        let onl_cond_oo = if period_type == "all" {
+            "1=1".to_string()
+        } else {
+            format!(
+                "({} OR (oo.collected_at IS NOT NULL AND {}))",
+                date_filter_sql("oo.created_at"),
+                date_filter_sql("oo.collected_at")
+            )
         };
 
         let gross_cash_received_paisa: i64 = conn.query_row(
